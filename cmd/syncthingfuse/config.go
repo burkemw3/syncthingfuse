@@ -5,6 +5,7 @@ import (
     "net"
     "os"
 
+    "github.com/syncthing/protocol"
     "github.com/syncthing/syncthing/lib/config"
     "github.com/syncthing/syncthing/lib/osutil"
 )
@@ -31,6 +32,16 @@ func getConfiguration() (*config.Wrapper) {
 	}
 
     return cfg
+}
+
+func upsertNewDeviceToConfiguration(cfg *config.Wrapper, deviceId protocol.DeviceID) {
+    newDeviceCfg := config.DeviceConfiguration{
+        DeviceID:    deviceId,
+        Compression: protocol.CompressMetadata,
+        Addresses:   []string{"dynamic"},
+    }
+    cfg.SetDevice(newDeviceCfg)
+    cfg.Save()
 }
 
 func ensureDir(dir string, mode int) {

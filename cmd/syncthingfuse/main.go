@@ -39,7 +39,7 @@ var l = logger.DefaultLogger
 // Command line and environment options
 var (
 	showVersion       bool
-	generateDir       string
+	addDeviceId       string
 )
 const (
 	usage      = "syncthing-fuse [options]"
@@ -53,6 +53,7 @@ The default configuration directory is:
 
 func main() {
 	flag.BoolVar(&showVersion, "version", false, "Show version")
+	flag.StringVar(&addDeviceId, "add-device", "", "Add a new device to the configuration, and exit (requires restart)")
 
 	flag.Usage = usageFor(flag.CommandLine, usage, fmt.Sprintf(extraUsage, baseDirs["config"]))
 	flag.Parse()
@@ -83,6 +84,13 @@ func main() {
 	l.Infoln("My ID:", myID)
 
 	cfg := getConfiguration()
+
+    if addDeviceId != "" {
+        deviceId, _ := protocol.DeviceIDFromString(addDeviceId)
+        upsertNewDeviceToConfiguration(cfg, deviceId)
+        l.Infoln("Upserted ", addDeviceId, " to configuration for connection")
+        return
+    }
 
     opts := cfg.Options()
 

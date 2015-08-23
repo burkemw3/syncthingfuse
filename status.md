@@ -16,7 +16,6 @@ TODO
   - host FUSE (https://github.com/bazil/fuse/tree/master/examples/hellofs)
 - CLI
   - manage configuration
-  - add devices
   - handle ls commands
   - handle fetch commands
 - Pin files for offline
