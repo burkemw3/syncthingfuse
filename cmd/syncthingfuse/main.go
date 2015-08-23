@@ -29,6 +29,7 @@ var (
 	discoverer *discover.Discoverer
 	cert       tls.Certificate
 	lans       []*net.IPNet
+	m          *model.Model
 )
 
 const (
@@ -39,8 +40,9 @@ var l = logger.DefaultLogger
 
 // Command line and environment options
 var (
-	showVersion bool
-	addDeviceId string
+	showVersion    bool
+	addDeviceId    string
+	fuseMountPoint string
 )
 
 const (
@@ -56,6 +58,7 @@ The default configuration directory is:
 func main() {
 	flag.BoolVar(&showVersion, "version", false, "Show version")
 	flag.StringVar(&addDeviceId, "add-device", "", "Add a new device to the configuration, and exit (requires restart)")
+	flag.StringVar(&fuseMountPoint, "fuse-mount-point", "", "Place to mount FUSE")
 
 	flag.Usage = usageFor(flag.CommandLine, usage, fmt.Sprintf(extraUsage, baseDirs["config"]))
 	flag.Parse()
@@ -63,6 +66,11 @@ func main() {
 	if showVersion {
 		fmt.Println(Version)
 		return
+	}
+
+	if fuseMountPoint == "" {
+		fmt.Println("fuse-mount-point is required")
+		os.Exit(1)
 	}
 
 	if err := expandLocations(); err != nil {
@@ -103,13 +111,14 @@ func main() {
 
 	discoverer := startDiscovery(cfg)
 
-	m := model.NewModel()
+	m = model.NewModel()
 
 	connectionSvc := connections.NewConnectionSvc(cfg, myID, m, discoverer, tlsCfg, nil, nil)
 	mainSvc.Add(connectionSvc)
 
 	l.Infoln("Started ...")
 
+	MountFuse(fuseMountPoint) // TODO handle fight between FUSE and Syncthing Service
 	code := <-stop
 
 	mainSvc.Stop()

@@ -13,6 +13,9 @@ type Model struct {
 	rawConn   map[protocol.DeviceID]io.Closer
 	deviceVer map[protocol.DeviceID]string
 	pmut      sync.RWMutex // protects protoConn and rawConn
+
+	folderFiles map[string]map[string]bool
+	fmut        sync.RWMutex // protects file information
 }
 
 func NewModel() *Model {
@@ -21,6 +24,9 @@ func NewModel() *Model {
 		rawConn:   make(map[protocol.DeviceID]io.Closer),
 		deviceVer: make(map[protocol.DeviceID]string),
 		pmut:      sync.NewRWMutex(),
+
+		folderFiles: make(map[string]map[string]bool),
+		fmut:        sync.NewRWMutex(),
 	}
 }
 
@@ -28,6 +34,7 @@ func (m *Model) AddConnection(rawConn io.Closer, protoConn protocol.Connection) 
 	deviceID := protoConn.ID()
 
 	m.pmut.Lock()
+
 	if _, ok := m.protoConn[deviceID]; ok {
 		panic("add existing device")
 	}
@@ -51,6 +58,8 @@ func (m *Model) AddConnection(rawConn io.Closer, protoConn protocol.Connection) 
 	}
 	cm.Folders = append(cm.Folders, cr)
 	protoConn.ClusterConfig(cm)
+
+	m.pmut.Unlock()
 }
 
 func (m *Model) ConnectedTo(deviceID protocol.DeviceID) bool {
@@ -60,13 +69,38 @@ func (m *Model) ConnectedTo(deviceID protocol.DeviceID) bool {
 	return ok
 }
 
+func (m *Model) GetFiles(folder string) []string {
+	m.fmut.RLock()
+
+	files := make([]string, 0)
+	for filename, _ := range m.folderFiles[folder] {
+		files = append(files, filename)
+	}
+
+	m.fmut.RUnlock()
+
+	return files
+}
+
 // An index was received from the peer device
 func (m *Model) Index(deviceID protocol.DeviceID, folder string, files []protocol.FileInfo, flags uint32, options []protocol.Option) {
-	fmt.Println("model: receiving index from device ", deviceID, " for folder ", folder)
+	if debug {
+		l.Debugln("model: receiving index from device", deviceID, "for folder", folder)
+	}
+
+	m.fmut.Lock()
+
+	_, ok := m.folderFiles[folder]
+	if !ok {
+		m.folderFiles[folder] = make(map[string]bool)
+	}
 
 	for _, file := range files {
-		fmt.Println("model Index: peer has file ", file.Name)
+		l.Debugln("model Index: peer has file", file.Name)
+		m.folderFiles[folder][file.Name] = true
 	}
+
+	m.fmut.Unlock()
 }
 
 // An index update was received from the peer device
