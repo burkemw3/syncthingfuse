@@ -113,7 +113,7 @@ func main() {
 
 	m = model.NewModel()
 
-	connectionSvc := connections.NewConnectionSvc(cfg, myID, m, discoverer, tlsCfg, nil, nil)
+	connectionSvc := connections.NewConnectionSvc(cfg, myID, m, discoverer, tlsCfg, tlsDefaultCommonName, nil, nil)
 	mainSvc.Add(connectionSvc)
 
 	l.Infoln("Started ...")
@@ -130,7 +130,7 @@ func main() {
 
 func startDiscovery(cfg *config.Wrapper) *discover.Discoverer {
 	opts := cfg.Options()
-	disc := discover.NewDiscoverer(myID, opts.ListenAddress)
+	disc := discover.NewDiscoverer(myID, opts.ListenAddress, nil)
 
 	if opts.LocalAnnEnabled {
 		l.Infoln("Starting local discovery announcements")

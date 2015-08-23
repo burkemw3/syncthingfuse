@@ -77,7 +77,7 @@ var dirDirs = []fuse.Dirent{
 
 func (Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	dirDirs := make([]fuse.Dirent, 0)
-	files := m.GetFiles("default")
+	files := m.GetFiles("syncthingfusetest")
 	for _, filename := range files {
 		dirDirs = append(dirDirs, fuse.Dirent{Inode: 2, Name: filename, Type: fuse.DT_File})
 	}

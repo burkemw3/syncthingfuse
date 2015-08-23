@@ -2,15 +2,14 @@ package model
 
 import (
 	"fmt"
-	"io"
 
 	"github.com/syncthing/protocol"
 	"github.com/syncthing/syncthing/lib/sync"
+	stmodel "github.com/syncthing/syncthing/lib/model"
 )
 
 type Model struct {
-	protoConn map[protocol.DeviceID]protocol.Connection
-	rawConn   map[protocol.DeviceID]io.Closer
+	protoConn map[protocol.DeviceID]stmodel.Connection
 	deviceVer map[protocol.DeviceID]string
 	pmut      sync.RWMutex // protects protoConn and rawConn
 
@@ -20,8 +19,7 @@ type Model struct {
 
 func NewModel() *Model {
 	return &Model{
-		protoConn: make(map[protocol.DeviceID]protocol.Connection),
-		rawConn:   make(map[protocol.DeviceID]io.Closer),
+		protoConn: make(map[protocol.DeviceID]stmodel.Connection),
 		deviceVer: make(map[protocol.DeviceID]string),
 		pmut:      sync.NewRWMutex(),
 
@@ -30,21 +28,17 @@ func NewModel() *Model {
 	}
 }
 
-func (m *Model) AddConnection(rawConn io.Closer, protoConn protocol.Connection) {
-	deviceID := protoConn.ID()
+func (m *Model) AddConnection(conn stmodel.Connection) {
+	deviceID := conn.ID()
 
 	m.pmut.Lock()
 
 	if _, ok := m.protoConn[deviceID]; ok {
 		panic("add existing device")
 	}
-	m.protoConn[deviceID] = protoConn
-	if _, ok := m.rawConn[deviceID]; ok {
-		panic("add existing device")
-	}
-	m.rawConn[deviceID] = rawConn
+	m.protoConn[deviceID] = conn
 
-	protoConn.Start()
+	conn.Start()
 
 	/* send cluster config */ // TODO stop hard coding this, get it from model, like syncthing?
 	cm := protocol.ClusterConfigMessage{
@@ -57,7 +51,7 @@ func (m *Model) AddConnection(rawConn io.Closer, protoConn protocol.Connection) 
 		ID: "default",
 	}
 	cm.Folders = append(cm.Folders, cr)
-	protoConn.ClusterConfig(cm)
+	conn.ClusterConfig(cm)
 
 	m.pmut.Unlock()
 }
@@ -67,6 +61,10 @@ func (m *Model) ConnectedTo(deviceID protocol.DeviceID) bool {
 	_, ok := m.protoConn[deviceID]
 	m.pmut.RUnlock()
 	return ok
+}
+
+func (m *Model) IsPaused(deviceID protocol.DeviceID) bool {
+	return false
 }
 
 func (m *Model) GetFiles(folder string) []string {
