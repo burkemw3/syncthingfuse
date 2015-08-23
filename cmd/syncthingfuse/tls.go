@@ -19,13 +19,13 @@ const (
 )
 
 func getTlsConfig() (*tls.Config, tls.Certificate) {
-    cert, err := tls.LoadX509KeyPair(locations[locCertFile], locations[locKeyFile])
-    if err != nil {
-    	cert, err = newCertificate(locations[locCertFile], locations[locKeyFile], tlsDefaultCommonName)
-    	if err != nil {
-    		l.Fatalln("load cert:", err)
-    	}
-    }
+	cert, err := tls.LoadX509KeyPair(locations[locCertFile], locations[locKeyFile])
+	if err != nil {
+		cert, err = newCertificate(locations[locCertFile], locations[locKeyFile], tlsDefaultCommonName)
+		if err != nil {
+			l.Fatalln("load cert:", err)
+		}
+	}
 
 	// The TLS configuration is used for both the listening socket and outgoing
 	// connections.
@@ -46,7 +46,7 @@ func getTlsConfig() (*tls.Config, tls.Certificate) {
 		},
 	}
 
-    return tlsCfg, cert
+	return tlsCfg, cert
 }
 
 func newCertificate(certFile, keyFile, name string) (tls.Certificate, error) {

@@ -1,11 +1,11 @@
 package main
 
 import (
-    "bytes"
-    "flag"
-    "fmt"
-    "io"
-    "text/tabwriter"
+	"bytes"
+	"flag"
+	"fmt"
+	"io"
+	"text/tabwriter"
 )
 
 func usageFor(fs *flag.FlagSet, usage string, extra string) func() {

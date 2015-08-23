@@ -1,17 +1,19 @@
 package main
 
 import (
-    "crypto/tls"
-    "flag"
+	"crypto/tls"
+	"flag"
 	"fmt"
 	"net"
-	"runtime"
-	"time"
+	"os"
 
 	"github.com/calmh/logger"
+	"github.com/syncthing-fuse/lib/model"
 	"github.com/syncthing/protocol"
 	"github.com/syncthing/syncthing/lib/config"
+	"github.com/syncthing/syncthing/lib/connections"
 	"github.com/syncthing/syncthing/lib/discover"
+	"github.com/thejerf/suture"
 )
 
 var (
@@ -20,27 +22,27 @@ var (
 )
 
 var (
-	cfg            *config.Wrapper
-	myID           protocol.DeviceID
-	confDir        string
-	stop           = make(chan int)
-	discoverer     *discover.Discoverer
-	cert           tls.Certificate
-	lans           []*net.IPNet
+	cfg        *config.Wrapper
+	myID       protocol.DeviceID
+	confDir    string
+	stop       = make(chan int)
+	discoverer *discover.Discoverer
+	cert       tls.Certificate
+	lans       []*net.IPNet
 )
 
 const (
-	bepProtocolName   = "bep/1.0"
+	bepProtocolName = "bep/1.0"
 )
-
 
 var l = logger.DefaultLogger
 
 // Command line and environment options
 var (
-	showVersion       bool
-	addDeviceId       string
+	showVersion bool
+	addDeviceId string
 )
+
 const (
 	usage      = "syncthing-fuse [options]"
 	extraUsage = `
@@ -80,71 +82,44 @@ func main() {
 	myID = protocol.NewDeviceID(cert.Certificate[0])
 	l.SetPrefix(fmt.Sprintf("[%s] ", myID.String()[:5]))
 
-	l.Infoln(LongVersion)
+	l.Infoln("Started syncthingfuse v.", LongVersion)
 	l.Infoln("My ID:", myID)
 
 	cfg := getConfiguration()
 
-    if addDeviceId != "" {
-        deviceId, _ := protocol.DeviceIDFromString(addDeviceId)
-        upsertNewDeviceToConfiguration(cfg, deviceId)
-        l.Infoln("Upserted ", addDeviceId, " to configuration for connection")
-        return
-    }
-
-    opts := cfg.Options()
-
-    /* TODO don't announce anything, cuz we can't do respond to anything right now */
-    opts.LocalAnnEnabled = false;
-    opts.GlobalAnnEnabled = false;
-
-	intfs, err := net.Interfaces()
-	if err != nil {
-		l.Debugln("discover: interfaces:", err)
-		l.Infoln("Local discovery over IPv6 unavailable")
+	if addDeviceId != "" {
+		deviceId, _ := protocol.DeviceIDFromString(addDeviceId)
+		upsertNewDeviceToConfiguration(cfg, deviceId)
+		l.Infoln("Upserted ", addDeviceId, " to configuration for connection")
 		return
 	}
 
-	//v6Intfs := 0
-	for _, intf := range intfs {
-		// Interface flags seem to always be 0 on Windows
-		if runtime.GOOS != "windows" && (intf.Flags&net.FlagUp == 0 || intf.Flags&net.FlagMulticast == 0) {
-			continue
-		}
-		fmt.Println("Interface: ", intf.Name)
-		if intf.Name == "en1" {
-/*    		mcaddr, err := net.ResolveUDPAddr("udp", "[ff32::5222]:21026")
-            check(err)
-            socket, err := net.ListenMulticastUDP("udp", &intf, mcaddr)
-            check(err)
-            fmt.Println("listening ...")
-            bep_addr := listen(socket)
-*/
-            bepConnect(tlsCfg, myID)
-		}
-	}
+	mainSvc := suture.New("main", suture.Spec{
+		Log: func(line string) {
+			l.Debugln(line)
+		},
+	})
+	mainSvc.ServeBackground()
 
+	discoverer := startDiscovery(cfg)
 
-    return
+	m := model.NewModel()
 
-	protocol.PingTimeout = time.Duration(opts.PingTimeoutS) * time.Second
-	protocol.PingIdleTime = time.Duration(opts.PingIdleTimeS) * time.Second
+	connectionSvc := connections.NewConnectionSvc(cfg, myID, m, discoverer, tlsCfg, nil, nil)
+	mainSvc.Add(connectionSvc)
 
-	addr, err := net.ResolveTCPAddr("tcp", opts.ListenAddress[0])
-	if err != nil {
-		l.Fatalln("Bad listen address:", err)
-	}
+	l.Infoln("Started ...")
 
-	// Start discovery
+	code := <-stop
 
-	localPort := addr.Port
-	discoverer = discovery(localPort)
+	mainSvc.Stop()
+	l.Okln("Exiting")
+	os.Exit(code)
 
-	fmt.Printf("Waiting ...")
+	return
 }
 
-
-func discovery(extPort int) *discover.Discoverer {
+func startDiscovery(cfg *config.Wrapper) *discover.Discoverer {
 	opts := cfg.Options()
 	disc := discover.NewDiscoverer(myID, opts.ListenAddress)
 
@@ -155,7 +130,15 @@ func discovery(extPort int) *discover.Discoverer {
 
 	if opts.GlobalAnnEnabled {
 		l.Infoln("Starting global discovery announcements")
-		disc.StartGlobal(opts.GlobalAnnServers, uint16(extPort))
+
+		addr, err := net.ResolveTCPAddr("tcp", opts.ListenAddress[0])
+		if err != nil {
+			l.Fatalln("Bad listen address:", err)
+		}
+
+		localPort := addr.Port
+
+		disc.StartGlobal(opts.GlobalAnnServers, uint16(localPort))
 	}
 
 	return disc

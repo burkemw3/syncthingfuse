@@ -6,8 +6,6 @@ TODO
 ----
 
 - long running process
-  - build it.
-  - do real peer discovery
   - respond to a simple CLI command (e.g. get cluster status) (http://jaytaylor.com/practical-go/#%2846%29, http://golang.org/pkg/net/rpc/)
   - create a Model
   - respond to CLI ls commands

@@ -1,11 +1,11 @@
 package main
 
 import (
-    "fmt"
-    "strings"
+	"fmt"
 	"runtime"
+	"strings"
 
-    "github.com/syncthing/syncthing/lib/osutil"
+	"github.com/syncthing/syncthing/lib/osutil"
 )
 
 type locationEnum string
@@ -74,16 +74,16 @@ func defaultConfigDir() string {
 	case "darwin":
 		dir, err := osutil.ExpandTilde("~/Library/Application Support/SyncthingFUSE")
 		if err != nil {
-		    fmt.Println("foobar")
+			fmt.Println("foobar")
 			l.Fatalln(err)
 		}
 		return dir
 
 	default:
-	    l.Fatalln("Only OS X supported right now!")
+		l.Fatalln("Only OS X supported right now!")
 	}
 
-    return "nil"
+	return "nil"
 }
 
 // homeDir returns the user's home directory, or dies trying.

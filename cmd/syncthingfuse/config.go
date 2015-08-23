@@ -1,16 +1,16 @@
 package main
 
 import (
-    "fmt"
-    "net"
-    "os"
+	"fmt"
+	"net"
+	"os"
 
-    "github.com/syncthing/protocol"
-    "github.com/syncthing/syncthing/lib/config"
-    "github.com/syncthing/syncthing/lib/osutil"
+	"github.com/syncthing/protocol"
+	"github.com/syncthing/syncthing/lib/config"
+	"github.com/syncthing/syncthing/lib/osutil"
 )
 
-func getConfiguration() (*config.Wrapper) {
+func getConfiguration() *config.Wrapper {
 	cfgFile := locations[locConfigFile]
 
 	// Load the configuration file, if it exists. If it does not, create a template.
@@ -31,17 +31,17 @@ func getConfiguration() (*config.Wrapper) {
 		l.Infof("Edit %s to taste or use the GUI\n", cfgFile)
 	}
 
-    return cfg
+	return cfg
 }
 
 func upsertNewDeviceToConfiguration(cfg *config.Wrapper, deviceId protocol.DeviceID) {
-    newDeviceCfg := config.DeviceConfiguration{
-        DeviceID:    deviceId,
-        Compression: protocol.CompressMetadata,
-        Addresses:   []string{"dynamic"},
-    }
-    cfg.SetDevice(newDeviceCfg)
-    cfg.Save()
+	newDeviceCfg := config.DeviceConfiguration{
+		DeviceID:    deviceId,
+		Compression: protocol.CompressMetadata,
+		Addresses:   []string{"dynamic"},
+	}
+	cfg.SetDevice(newDeviceCfg)
+	cfg.Save()
 }
 
 func ensureDir(dir string, mode int) {
@@ -90,6 +90,7 @@ func defaultConfig(myName string) config.Configuration {
 		l.Fatalln("get free port (BEP):", err)
 	}
 	newCfg.Options.ListenAddress = []string{fmt.Sprintf("0.0.0.0:%d", port)}
+
 	return newCfg
 }
 
