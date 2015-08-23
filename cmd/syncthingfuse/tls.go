@@ -18,6 +18,37 @@ const (
 	tlsDefaultCommonName = "syncthing"
 )
 
+func getTlsConfig() (*tls.Config, tls.Certificate) {
+    cert, err := tls.LoadX509KeyPair(locations[locCertFile], locations[locKeyFile])
+    if err != nil {
+    	cert, err = newCertificate(locations[locCertFile], locations[locKeyFile], tlsDefaultCommonName)
+    	if err != nil {
+    		l.Fatalln("load cert:", err)
+    	}
+    }
+
+	// The TLS configuration is used for both the listening socket and outgoing
+	// connections.
+	tlsCfg := &tls.Config{
+		Certificates:           []tls.Certificate{cert},
+		NextProtos:             []string{bepProtocolName},
+		ClientAuth:             tls.RequestClientCert,
+		SessionTicketsDisabled: true,
+		InsecureSkipVerify:     true,
+		MinVersion:             tls.VersionTLS12,
+		CipherSuites: []uint16{
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
+			tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
+		},
+	}
+
+    return tlsCfg, cert
+}
+
 func newCertificate(certFile, keyFile, name string) (tls.Certificate, error) {
 	l.Infof("Generating RSA key and certificate for %s...", name)
 
