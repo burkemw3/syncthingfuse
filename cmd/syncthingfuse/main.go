@@ -11,9 +11,9 @@ import (
 	"github.com/syncthing-fuse/lib/model"
 	"github.com/syncthing/protocol"
 	"github.com/syncthing/syncthing/lib/config"
-	"github.com/syncthing/syncthing/lib/connections"
+//	"github.com/syncthing/syncthing/lib/connections"
 	"github.com/syncthing/syncthing/lib/discover"
-	"github.com/thejerf/suture"
+//	"github.com/thejerf/suture"
 )
 
 var (
@@ -72,7 +72,7 @@ func main() {
 		fmt.Println("fuse-mount-point is required")
 		os.Exit(1)
 	}
-
+/*
 	if err := expandLocations(); err != nil {
 		l.Fatalln(err)
 	}
@@ -115,13 +115,13 @@ func main() {
 
 	connectionSvc := connections.NewConnectionSvc(cfg, myID, m, discoverer, tlsCfg, tlsDefaultCommonName, nil, nil)
 	mainSvc.Add(connectionSvc)
-
+*/
 	l.Infoln("Started ...")
 
 	MountFuse(fuseMountPoint) // TODO handle fight between FUSE and Syncthing Service
 	code := <-stop
 
-	mainSvc.Stop()
+// TODO 	mainSvc.Stop()
 	l.Okln("Exiting")
 	os.Exit(code)
 

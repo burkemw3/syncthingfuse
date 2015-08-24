@@ -13,7 +13,7 @@ type Model struct {
 	deviceVer map[protocol.DeviceID]string
 	pmut      sync.RWMutex // protects protoConn and rawConn
 
-	folderFiles map[string]map[string]bool
+	folderFiles map[string]map[string]protocol.FileInfo
 	fmut        sync.RWMutex // protects file information
 }
 
@@ -23,7 +23,7 @@ func NewModel() *Model {
 		deviceVer: make(map[protocol.DeviceID]string),
 		pmut:      sync.NewRWMutex(),
 
-		folderFiles: make(map[string]map[string]bool),
+		folderFiles: make(map[string]map[string]protocol.FileInfo),
 		fmut:        sync.NewRWMutex(),
 	}
 }
@@ -67,12 +67,12 @@ func (m *Model) IsPaused(deviceID protocol.DeviceID) bool {
 	return false
 }
 
-func (m *Model) GetFiles(folder string) []string {
+func (m *Model) GetFiles(folder string) []protocol.FileInfo {
 	m.fmut.RLock()
 
-	files := make([]string, 0)
-	for filename, _ := range m.folderFiles[folder] {
-		files = append(files, filename)
+	files := make([]protocol.FileInfo, 0)
+	for _, file := range m.folderFiles[folder] {
+		files = append(files, file)
 	}
 
 	m.fmut.RUnlock()
@@ -90,12 +90,12 @@ func (m *Model) Index(deviceID protocol.DeviceID, folder string, files []protoco
 
 	_, ok := m.folderFiles[folder]
 	if !ok {
-		m.folderFiles[folder] = make(map[string]bool)
+		m.folderFiles[folder] = make(map[string]protocol.FileInfo)
 	}
 
 	for _, file := range files {
 		l.Debugln("model Index: peer has file", file.Name)
-		m.folderFiles[folder][file.Name] = true
+		m.folderFiles[folder][file.Name] = file
 	}
 
 	m.fmut.Unlock()

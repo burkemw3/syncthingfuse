@@ -47,50 +47,85 @@ func MountFuse(mountpoint string) {
 type FS struct{}
 
 func (FS) Root() (fs.Node, error) {
-	return Dir{}, nil
+    dir := Dir{
+        directories: []Dir{},
+        files: []File{
+            File{
+                inode: 2,
+                name: "file",
+            },
+        },
+    }
+	return dir, nil
 }
 
 // Dir implements both Node and Handle for the root directory.
-type Dir struct{}
+type Dir struct{
+    inode uint64
+    name string
+    directories []Dir
+    files []File
+}
 
-func (Dir) Attr(ctx context.Context, a *fuse.Attr) error {
-	a.Inode = 1
+func (d Dir) Attr(ctx context.Context, a *fuse.Attr) error {
+	a.Inode = d.inode
 	a.Mode = os.ModeDir | 0555
 	return nil
 }
 
-func (Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
-	if name == "hello" {
-		return File{}, nil
-	}
-	if name == "canis-minor.foobar" {
-		return File{}, nil
-	}
+func (d Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
+    if name == "file" {
+        return File{}, nil
+    } else if name == "directory" {
+        return Dir{}, nil
+    }
+	fmt.Println("Lookup not implemented for ", name)
 	return nil, fuse.ENOENT
 }
 
-/*
-var dirDirs = []fuse.Dirent{
-	{Inode: 2, Name: "hello", Type: fuse.DT_File},
+func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
+    dirDirs := make([]fuse.Dirent, 0)
+    for _, childDir := range d.directories {
+        dirDirs = append(dirDirs, fuse.Dirent{Inode: childDir.inode, Name: childDir.name, Type: fuse.DT_Dir})
+    }
+    for _, childFile := range d.files {
+        dirDirs = append(dirDirs, fuse.Dirent{Inode: childFile.inode, Name: childFile.name, Type: fuse.DT_File})
+    }
+	return dirDirs, nil
 }
-*/
+
+/*
+func (Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
+    files := m.GetFiles("syncthingfusetest")
+    for _, file := range files {
+        if file.Name == name {
+            return File{}, nil
+        }
+    }
+	fmt.Println("Lookup not implemented for ", name)
+	return nil, fuse.ENOENT
+}
 
 func (Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	dirDirs := make([]fuse.Dirent, 0)
 	files := m.GetFiles("syncthingfusetest")
-	for _, filename := range files {
-		dirDirs = append(dirDirs, fuse.Dirent{Inode: 2, Name: filename, Type: fuse.DT_File})
+	for _, file := range files {
+		dirDirs = append(dirDirs, fuse.Dirent{Inode: 2, Name: file.Name, Type: fuse.DT_File})
 	}
 	return dirDirs, nil
 }
+*/
 
 // File implements both Node and Handle for the hello file.
-type File struct{}
+type File struct{
+    inode uint64
+    name string
+}
 
 const greeting = "hello, world\n"
 
-func (File) Attr(ctx context.Context, a *fuse.Attr) error {
-	a.Inode = 2
+func (f File) Attr(ctx context.Context, a *fuse.Attr) error {
+	a.Inode = f.inode
 	a.Mode = 0444
 	a.Size = uint64(len(greeting))
 	return nil
