@@ -1,14 +1,23 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
+	"os/signal"
+	"path"
+	"path/filepath"
+	"runtime"
+	"syscall"
+	"time"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	_ "bazil.org/fuse/fs/fstestutil"
+	"github.com/burkemw3/syncthing-fuse/lib/model"
 	"golang.org/x/net/context"
 )
 
@@ -29,97 +38,107 @@ func MountFuse(mountpoint string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer c.Close()
 
-	err = fs.Serve(c, FS{})
-	if err != nil {
-		log.Fatal(err)
+	sigc := make(chan os.Signal, 1)
+	signal.Notify(sigc, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT)
+
+	doneServe := make(chan error, 1)
+	go func() {
+		doneServe <- fs.Serve(c, FS{})
+	}()
+
+	select {
+	case err := <-doneServe:
+		log.Printf("conn.Serve returned %v", err)
+
+		// check if the mount process has an error to report
+		<-c.Ready
+		if err := c.MountError; err != nil {
+			log.Printf("conn.MountError: %v", err)
+		}
+	case sig := <-sigc:
+		log.Printf("Signal %s received, shutting down.", sig)
 	}
 
-	// check if the mount process has an error to report
-	<-c.Ready
-	if err := c.MountError; err != nil {
-		log.Fatal(err)
-	}
+	time.AfterFunc(3*time.Second, func() {
+		os.Exit(1)
+	})
+	log.Printf("Unmounting...")
+	err = Unmount(mountpoint)
+	log.Printf("Unmount = %v", err)
+
+	log.Printf("cammount FUSE process ending.")
 }
 
-// FS implements the hello world file system.
-type FS struct{}
+var (
+	folder = "syncthingfusetest"
+)
 
-func (FS) Root() (fs.Node, error) {
-    dir := Dir{
-        directories: []Dir{},
-        files: []File{
-            File{
-                inode: 2,
-                name: "file",
-            },
-        },
-    }
-	return dir, nil
+type FS struct {
+	m *model.Model
+}
+
+func (fs FS) Root() (fs.Node, error) {
+	log.Printf("Root")
+	return Dir{m: fs.m}, nil
 }
 
 // Dir implements both Node and Handle for the root directory.
-type Dir struct{
-    inode uint64
-    name string
-    directories []Dir
-    files []File
+type Dir struct {
+	path string
+	m    *model.Model
 }
 
 func (d Dir) Attr(ctx context.Context, a *fuse.Attr) error {
-	a.Inode = d.inode
+	log.Printf("Dir Attr")
 	a.Mode = os.ModeDir | 0555
 	return nil
 }
 
 func (d Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
-    if name == "file" {
-        return File{}, nil
-    } else if name == "directory" {
-        return Dir{}, nil
-    }
-	fmt.Println("Lookup not implemented for ", name)
-	return nil, fuse.ENOENT
+	log.Printf("Dir %s Lookup for %s", d.path, name)
+	entry := d.m.GetEntry(folder, filepath.Join(d.path, name))
+
+	var node fs.Node
+	if entry.IsDirectory() {
+		node = Dir{
+			path: entry.Name,
+			m:    d.m,
+		}
+	} else {
+		node = File{
+		// TODO
+		// path: entry.Name,
+		// m: d.m,
+		}
+	}
+
+	return node, nil
 }
 
 func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
-    dirDirs := make([]fuse.Dirent, 0)
-    for _, childDir := range d.directories {
-        dirDirs = append(dirDirs, fuse.Dirent{Inode: childDir.inode, Name: childDir.name, Type: fuse.DT_Dir})
-    }
-    for _, childFile := range d.files {
-        dirDirs = append(dirDirs, fuse.Dirent{Inode: childFile.inode, Name: childFile.name, Type: fuse.DT_File})
-    }
-	return dirDirs, nil
-}
+	log.Printf("ReadDirAll %d", d.path)
 
-/*
-func (Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
-    files := m.GetFiles("syncthingfusetest")
-    for _, file := range files {
-        if file.Name == name {
-            return File{}, nil
-        }
-    }
-	fmt.Println("Lookup not implemented for ", name)
-	return nil, fuse.ENOENT
-}
-
-func (Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
-	dirDirs := make([]fuse.Dirent, 0)
-	files := m.GetFiles("syncthingfusetest")
-	for _, file := range files {
-		dirDirs = append(dirDirs, fuse.Dirent{Inode: 2, Name: file.Name, Type: fuse.DT_File})
+	entries := d.m.GetChildren(folder, d.path)
+	result := make([]fuse.Dirent, len(entries))
+	for i, entry := range entries {
+		eType := fuse.DT_File
+		if entry.IsDirectory() {
+			eType = fuse.DT_Dir
+		}
+		result[i] = fuse.Dirent{
+			Name: path.Base(entry.Name),
+			Type: eType,
+		}
 	}
-	return dirDirs, nil
+
+	return result, nil
 }
-*/
 
 // File implements both Node and Handle for the hello file.
-type File struct{
-    inode uint64
-    name string
+type File struct {
+	inode uint64
+	name  string
 }
 
 const greeting = "hello, world\n"
@@ -133,4 +152,33 @@ func (f File) Attr(ctx context.Context, a *fuse.Attr) error {
 
 func (File) ReadAll(ctx context.Context) ([]byte, error) {
 	return []byte(greeting), nil
+}
+
+// Unmount attempts to unmount the provided FUSE mount point, forcibly
+// if necessary.
+func Unmount(point string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("/usr/sbin/diskutil", "umount", "force", point)
+	case "linux":
+		cmd = exec.Command("fusermount", "-u", point)
+	default:
+		return errors.New("unmount: unimplemented")
+	}
+
+	errc := make(chan error, 1)
+	go func() {
+		if err := exec.Command("umount", point).Run(); err == nil {
+			errc <- err
+		}
+		// retry to unmount with the fallback cmd
+		errc <- cmd.Run()
+	}()
+	select {
+	case <-time.After(1 * time.Second):
+		return errors.New("umount timeout")
+	case err := <-errc:
+		return err
+	}
 }

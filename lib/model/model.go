@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/syncthing/protocol"
-	"github.com/syncthing/syncthing/lib/sync"
 	stmodel "github.com/syncthing/syncthing/lib/model"
+	"github.com/syncthing/syncthing/lib/sync"
 )
 
 type Model struct {
@@ -13,7 +13,9 @@ type Model struct {
 	deviceVer map[protocol.DeviceID]string
 	pmut      sync.RWMutex // protects protoConn and rawConn
 
-	folderFiles map[string]map[string]protocol.FileInfo
+	// TODO keep devices associated with each file
+	entries     map[string]map[string]protocol.FileInfo
+	childLookup map[string]map[string][]string
 	fmut        sync.RWMutex // protects file information
 }
 
@@ -23,8 +25,8 @@ func NewModel() *Model {
 		deviceVer: make(map[protocol.DeviceID]string),
 		pmut:      sync.NewRWMutex(),
 
-		folderFiles: make(map[string]map[string]protocol.FileInfo),
-		fmut:        sync.NewRWMutex(),
+		entries: make(map[string]map[string]protocol.FileInfo),
+		fmut:    sync.NewRWMutex(),
 	}
 }
 
@@ -67,17 +69,36 @@ func (m *Model) IsPaused(deviceID protocol.DeviceID) bool {
 	return false
 }
 
-func (m *Model) GetFiles(folder string) []protocol.FileInfo {
+func (m *Model) GetEntry(folder string, path string) protocol.FileInfo {
 	m.fmut.RLock()
 
-	files := make([]protocol.FileInfo, 0)
-	for _, file := range m.folderFiles[folder] {
-		files = append(files, file)
+	entry := m.entries[folder][path]
+	result := protocol.FileInfo{
+		Name:  entry.Name,
+		Flags: entry.Flags,
 	}
 
 	m.fmut.RUnlock()
 
-	return files
+	return result
+}
+
+func (m *Model) GetChildren(folder string, path string) []protocol.FileInfo {
+	m.fmut.RLock()
+
+	entries := m.childLookup[folder][path]
+	result := make([]protocol.FileInfo, len(entries))
+	for i, childPath := range entries {
+		entry := m.entries[folder][childPath]
+		result[i] = protocol.FileInfo{
+			Name:  entry.Name,
+			Flags: entry.Flags,
+		}
+	}
+
+	m.fmut.RUnlock()
+
+	return result
 }
 
 // An index was received from the peer device
@@ -88,14 +109,14 @@ func (m *Model) Index(deviceID protocol.DeviceID, folder string, files []protoco
 
 	m.fmut.Lock()
 
-	_, ok := m.folderFiles[folder]
+	_, ok := m.entries[folder]
 	if !ok {
-		m.folderFiles[folder] = make(map[string]protocol.FileInfo)
+		m.entries[folder] = make(map[string]protocol.FileInfo)
 	}
 
 	for _, file := range files {
 		l.Debugln("model Index: peer has file", file.Name)
-		m.folderFiles[folder][file.Name] = file
+		m.entries[folder][file.Name] = file
 	}
 
 	m.fmut.Unlock()

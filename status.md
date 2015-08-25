@@ -6,10 +6,12 @@ TODO
 ----
 
 - long running process
-  - serve file contents
+  - serve file contents (rwfolder.go pullerRoutine)
   - cache file contents
   - fix unmounting problem (have to eject in Finder before re-mounting)
   - update Model from peers
+  - should probably prevent spotlight indexing (metadata_never_index)
+  - would be nice to allow some files to be indexed. maybe we can detect the spotlight process and index conditionally
 - CLI
   - manage configuration
 - Pin files for offline
