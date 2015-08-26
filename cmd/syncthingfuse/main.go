@@ -140,7 +140,12 @@ func startDiscovery(cfg *config.Wrapper) *discover.Discoverer {
 	if opts.GlobalAnnEnabled {
 		l.Infoln("Starting global discovery announcements")
 
-		addr, err := net.ResolveTCPAddr("tcp", opts.ListenAddress[0])
+		uri, err := url.Parse(opts.ListenAddress[0])
+		if err != nil {
+			l.Fatalf("Failed to parse listen address %s: %v", opts.ListenAddress[0], err)
+		}
+
+		addr, err := net.ResolveTCPAddr("tcp", uri.Host)
 		if err != nil {
 			l.Fatalln("Bad listen address:", err)
 		}
