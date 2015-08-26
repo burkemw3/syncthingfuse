@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"path"
 
 	"github.com/syncthing/protocol"
 	stmodel "github.com/syncthing/syncthing/lib/model"
@@ -25,8 +26,9 @@ func NewModel() *Model {
 		deviceVer: make(map[protocol.DeviceID]string),
 		pmut:      sync.NewRWMutex(),
 
-		entries: make(map[string]map[string]protocol.FileInfo),
-		fmut:    sync.NewRWMutex(),
+		entries:     make(map[string]map[string]protocol.FileInfo),
+		childLookup: make(map[string]map[string][]string),
+		fmut:        sync.NewRWMutex(),
 	}
 }
 
@@ -86,6 +88,8 @@ func (m *Model) GetEntry(folder string, path string) protocol.FileInfo {
 func (m *Model) GetChildren(folder string, path string) []protocol.FileInfo {
 	m.fmut.RLock()
 
+	// TODO assert is directory?
+
 	entries := m.childLookup[folder][path]
 	result := make([]protocol.FileInfo, len(entries))
 	for i, childPath := range entries {
@@ -112,11 +116,37 @@ func (m *Model) Index(deviceID protocol.DeviceID, folder string, files []protoco
 	_, ok := m.entries[folder]
 	if !ok {
 		m.entries[folder] = make(map[string]protocol.FileInfo)
+		m.childLookup[folder] = make(map[string][]string)
 	}
 
 	for _, file := range files {
-		l.Debugln("model Index: peer has file", file.Name)
+		if file.IsDeleted() {
+			l.Debugln("model Index: peer has deleted file", file.Name)
+			continue
+		}
+		if file.IsInvalid() {
+			l.Debugln("model Index: peer has invalid file", file.Name)
+			continue
+		}
+		if file.IsSymlink() {
+			l.Debugln("model Index: peer has symlink", file.Name)
+			continue
+		}
+		l.Debugln("model Index: peer has file/dir", file.Name)
+
+		// Add to primary lookup
 		m.entries[folder][file.Name] = file
+
+		// add to directory children lookup
+		dir := path.Dir(file.Name)
+		_, ok := m.childLookup[folder][dir]
+		if ok {
+			m.childLookup[folder][dir] = append(m.childLookup[folder][dir], file.Name)
+		} else {
+			children := make([]string, 1)
+			children[0] = file.Name
+			m.childLookup[folder][dir] = children
+		}
 	}
 
 	m.fmut.Unlock()

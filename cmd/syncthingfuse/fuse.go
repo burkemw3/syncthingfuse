@@ -18,6 +18,7 @@ import (
 	"bazil.org/fuse/fs"
 	_ "bazil.org/fuse/fs/fstestutil"
 	"github.com/burkemw3/syncthing-fuse/lib/model"
+	"github.com/syncthing/protocol"
 	"golang.org/x/net/context"
 )
 
@@ -44,7 +45,7 @@ func MountFuse(mountpoint string) {
 
 	doneServe := make(chan error, 1)
 	go func() {
-		doneServe <- fs.Serve(c, FS{})
+		doneServe <- fs.Serve(c, FS{m: makeModel()}) // TODO use real model
 	}()
 
 	select {
@@ -67,12 +68,32 @@ func MountFuse(mountpoint string) {
 	err = Unmount(mountpoint)
 	log.Printf("Unmount = %v", err)
 
-	log.Printf("cammount FUSE process ending.")
+	log.Printf("syncthing FUSE process ending.")
 }
 
 var (
 	folder = "syncthingfusetest"
 )
+
+func makeModel() *model.Model {
+	m := model.NewModel()
+
+	deviceID := protocol.DeviceID{}
+	flags := uint32(0)
+	options := []protocol.Option{}
+
+	files := []protocol.FileInfo{
+		protocol.FileInfo{Name: "file1"},
+		protocol.FileInfo{Name: "file2"},
+		protocol.FileInfo{Name: "dir1", Flags: protocol.FlagDirectory},
+		protocol.FileInfo{Name: "dir1/dirfile1"},
+		protocol.FileInfo{Name: "dir1/dirfile2"},
+	}
+
+	m.Index(deviceID, folder, files, flags, options)
+
+	return m
+}
 
 type FS struct {
 	m *model.Model
@@ -117,9 +138,11 @@ func (d Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 }
 
 func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
-	log.Printf("ReadDirAll %d", d.path)
+	log.Printf("ReadDirAll %s", d.path)
 
-	entries := d.m.GetChildren(folder, d.path)
+	p := path.Clean(d.path)
+
+	entries := d.m.GetChildren(folder, p)
 	result := make([]fuse.Dirent, len(entries))
 	for i, entry := range entries {
 		eType := fuse.DT_File
