@@ -28,7 +28,7 @@ var Usage = func() {
 	flag.PrintDefaults()
 }
 
-func MountFuse(mountpoint string) {
+func MountFuse(mountpoint string, m *model.Model) {
 	c, err := fuse.Mount(
 		mountpoint,
 		fuse.FSName("syncthingfuse"),
@@ -45,7 +45,7 @@ func MountFuse(mountpoint string) {
 
 	doneServe := make(chan error, 1)
 	go func() {
-		doneServe <- fs.Serve(c, FS{m: makeModel()}) // TODO use real model
+		doneServe <- fs.Serve(c, FS{m: m})
 	}()
 
 	select {

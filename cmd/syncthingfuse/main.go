@@ -5,15 +5,16 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 
 	"github.com/burkemw3/syncthing-fuse/lib/model"
 	"github.com/calmh/logger"
 	"github.com/syncthing/protocol"
 	"github.com/syncthing/syncthing/lib/config"
-	//	"github.com/syncthing/syncthing/lib/connections"
+	"github.com/syncthing/syncthing/lib/connections"
 	"github.com/syncthing/syncthing/lib/discover"
-	//	"github.com/thejerf/suture"
+	"github.com/thejerf/suture"
 )
 
 var (
@@ -68,62 +69,60 @@ func main() {
 		return
 	}
 
+	if err := expandLocations(); err != nil {
+		l.Fatalln(err)
+	}
+
+	// Ensure that our home directory exists.
+	ensureDir(baseDirs["config"], 0700)
+
+	// Ensure that that we have a certificate and key.
+	tlsCfg, cert := getTlsConfig()
+
+	// We reinitialize the predictable RNG with our device ID, to get a
+	// sequence that is always the same but unique to this syncthing instance.
+	predictableRandom.Seed(seedFromBytes(cert.Certificate[0]))
+
+	myID = protocol.NewDeviceID(cert.Certificate[0])
+	l.SetPrefix(fmt.Sprintf("[%s] ", myID.String()[:5]))
+
+	l.Infoln("Started syncthingfuse v.", LongVersion)
+	l.Infoln("My ID:", myID)
+
+	cfg := getConfiguration()
+
+	if addDeviceId != "" {
+		deviceId, _ := protocol.DeviceIDFromString(addDeviceId)
+		upsertNewDeviceToConfiguration(cfg, deviceId)
+		l.Infoln("Upserted ", addDeviceId, " to configuration for connection")
+		return
+	}
+
 	if fuseMountPoint == "" {
 		fmt.Println("fuse-mount-point is required")
 		os.Exit(1)
 	}
-	/*
-		if err := expandLocations(); err != nil {
-			l.Fatalln(err)
-		}
 
-		// Ensure that our home directory exists.
-		ensureDir(baseDirs["config"], 0700)
+	mainSvc := suture.New("main", suture.Spec{
+		Log: func(line string) {
+			l.Debugln(line)
+		},
+	})
+	mainSvc.ServeBackground()
 
-		// Ensure that that we have a certificate and key.
-		tlsCfg, cert := getTlsConfig()
+	discoverer := startDiscovery(cfg)
 
-		// We reinitialize the predictable RNG with our device ID, to get a
-		// sequence that is always the same but unique to this syncthing instance.
-		predictableRandom.Seed(seedFromBytes(cert.Certificate[0]))
+	m = model.NewModel()
 
-		myID = protocol.NewDeviceID(cert.Certificate[0])
-		l.SetPrefix(fmt.Sprintf("[%s] ", myID.String()[:5]))
+	connectionSvc := connections.NewConnectionSvc(cfg, myID, m, discoverer, tlsCfg, tlsDefaultCommonName, nil, nil)
+	mainSvc.Add(connectionSvc)
 
-		l.Infoln("Started syncthingfuse v.", LongVersion)
-		l.Infoln("My ID:", myID)
-
-		cfg := getConfiguration()
-
-		if addDeviceId != "" {
-			deviceId, _ := protocol.DeviceIDFromString(addDeviceId)
-			upsertNewDeviceToConfiguration(cfg, deviceId)
-			l.Infoln("Upserted ", addDeviceId, " to configuration for connection")
-			return
-		}
-
-		mainSvc := suture.New("main", suture.Spec{
-			Log: func(line string) {
-				l.Debugln(line)
-			},
-		})
-		mainSvc.ServeBackground()
-
-		discoverer := startDiscovery(cfg)
-
-		m = model.NewModel()
-
-		connectionSvc := connections.NewConnectionSvc(cfg, myID, m, discoverer, tlsCfg, tlsDefaultCommonName, nil, nil)
-		mainSvc.Add(connectionSvc)
-	*/
 	l.Infoln("Started ...")
 
-	MountFuse(fuseMountPoint) // TODO handle fight between FUSE and Syncthing Service
-	code := <-stop
+	MountFuse(fuseMountPoint, m) // TODO handle fight between FUSE and Syncthing Service
 
-	// TODO 	mainSvc.Stop()
+	mainSvc.Stop()
 	l.Okln("Exiting")
-	os.Exit(code)
 
 	return
 }
