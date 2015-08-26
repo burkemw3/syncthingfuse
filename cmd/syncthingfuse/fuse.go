@@ -4,13 +4,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -37,7 +37,7 @@ func MountFuse(mountpoint string, m *model.Model) {
 		fuse.VolumeName("Syncthing FUSE"),
 	)
 	if err != nil {
-		log.Fatal(err)
+		l.Warnln(err)
 	}
 
 	sigc := make(chan os.Signal, 1)
@@ -50,29 +50,30 @@ func MountFuse(mountpoint string, m *model.Model) {
 
 	select {
 	case err := <-doneServe:
-		log.Printf("conn.Serve returned %v", err)
+		l.Infoln("conn.Serve returned %v", err)
 
 		// check if the mount process has an error to report
 		<-c.Ready
 		if err := c.MountError; err != nil {
-			log.Printf("conn.MountError: %v", err)
+			l.Warnln("conn.MountError: %v", err)
 		}
 	case sig := <-sigc:
-		log.Printf("Signal %s received, shutting down.", sig)
+		l.Infoln("Signal %s received, shutting down.", sig)
 	}
 
 	time.AfterFunc(3*time.Second, func() {
 		os.Exit(1)
 	})
-	log.Printf("Unmounting...")
+	l.Infoln("Unmounting...")
 	err = Unmount(mountpoint)
-	log.Printf("Unmount = %v", err)
+	l.Infoln("Unmount = %v", err)
 
-	log.Printf("syncthing FUSE process ending.")
+	l.Infoln("syncthing FUSE process ending.")
 }
 
 var (
-	folder = "syncthingfusetest"
+	folder    = "syncthingfusetest"
+	debugFuse = strings.Contains(os.Getenv("STTRACE"), "fuse") || os.Getenv("STTRACE") == "all"
 )
 
 func makeModel() *model.Model {
@@ -100,7 +101,9 @@ type FS struct {
 }
 
 func (fs FS) Root() (fs.Node, error) {
-	log.Printf("Root")
+	if debugFuse {
+		l.Debugln("Root")
+	}
 	return Dir{m: fs.m}, nil
 }
 
@@ -111,13 +114,17 @@ type Dir struct {
 }
 
 func (d Dir) Attr(ctx context.Context, a *fuse.Attr) error {
-	log.Printf("Dir Attr")
+	if debugFuse {
+		l.Debugln("Dir Attr")
+	}
 	a.Mode = os.ModeDir | 0555
 	return nil
 }
 
 func (d Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
-	log.Printf("Dir %s Lookup for %s", d.path, name)
+	if debugFuse {
+		l.Debugln("Dir %s Lookup for %s", d.path, name)
+	}
 	entry := d.m.GetEntry(folder, filepath.Join(d.path, name))
 
 	var node fs.Node
@@ -138,7 +145,9 @@ func (d Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 }
 
 func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
-	log.Printf("ReadDirAll %s", d.path)
+	if debugFuse {
+		l.Debugln("ReadDirAll %s", d.path)
+	}
 
 	p := path.Clean(d.path)
 
