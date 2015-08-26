@@ -75,14 +75,49 @@ func (m *Model) GetEntry(folder string, path string) protocol.FileInfo {
 	m.fmut.RLock()
 
 	entry := m.entries[folder][path]
-	result := protocol.FileInfo{
-		Name:  entry.Name,
-		Flags: entry.Flags,
+
+	m.fmut.RUnlock()
+
+	return entry
+}
+
+func (m *Model) GetFileData(folder string, path string) ([]byte, error) {
+	m.fmut.RLock()
+
+	entry := m.entries[folder][path]
+	if debug {
+		l.Debugln("Creating data for", folder, path, "size", entry.Size())
+	}
+	data := make([]byte, entry.Size())
+
+	for _, conn := range m.protoConn {
+		for i, block := range entry.Blocks {
+			if debug {
+				l.Debugln("Fetching block", i, "size", block.Size)
+			}
+			byteOffset := int64(i * protocol.BlockSize)
+			flags := uint32(0)
+			blockData, err := conn.Request(folder, path, byteOffset, int(block.Size), block.Hash, flags, []protocol.Option{})
+			if err != nil {
+				return blockData, err
+			}
+			// TODO check hash
+			if debug {
+				l.Debugln("Putting data at", byteOffset)
+			}
+			for j, k := byteOffset, int32(0); k < block.Size; j, k = j+1, k+1 {
+				data[j] = blockData[k]
+			}
+		}
+
+		break // only one device for now ...
+		// TODO support multiple devices
+		// TODO support zero devices
 	}
 
 	m.fmut.RUnlock()
 
-	return result
+	return data, nil
 }
 
 func (m *Model) GetChildren(folder string, path string) []protocol.FileInfo {
@@ -93,11 +128,7 @@ func (m *Model) GetChildren(folder string, path string) []protocol.FileInfo {
 	entries := m.childLookup[folder][path]
 	result := make([]protocol.FileInfo, len(entries))
 	for i, childPath := range entries {
-		entry := m.entries[folder][childPath]
-		result[i] = protocol.FileInfo{
-			Name:  entry.Name,
-			Flags: entry.Flags,
-		}
+		result[i] = m.entries[folder][childPath]
 	}
 
 	m.fmut.RUnlock()

@@ -16,6 +16,10 @@ TODO
   - manage configuration
 - Pin files for offline
 - Support writes.
+- manage Unified Buffer Cache
+  - OSX caches files! probably good, hard to update correctly
+  - https://github.com/osxfuse/osxfuse/wiki/SSHFS#frequently-asked-questions
+  - http://wagerlabs.com/blog/2008/03/04/hacking-the-mac-osx-unified-buffer-cache/
 
 Decisions
 ---------

@@ -135,9 +135,8 @@ func (d Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 		}
 	} else {
 		node = File{
-		// TODO
-		// path: entry.Name,
-		// m: d.m,
+			path: entry.Name,
+			m:    d.m,
 		}
 	}
 
@@ -169,21 +168,23 @@ func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 
 // File implements both Node and Handle for the hello file.
 type File struct {
-	inode uint64
-	name  string
+	path string
+	m    *model.Model
 }
 
-const greeting = "hello, world\n"
-
 func (f File) Attr(ctx context.Context, a *fuse.Attr) error {
-	a.Inode = f.inode
+	entry := f.m.GetEntry(folder, f.path)
+
 	a.Mode = 0444
-	a.Size = uint64(len(greeting))
+	a.Mtime = time.Now()
+	a.Size = uint64(entry.Size())
 	return nil
 }
 
-func (File) ReadAll(ctx context.Context) ([]byte, error) {
-	return []byte(greeting), nil
+func (f File) ReadAll(ctx context.Context) ([]byte, error) {
+	data, err := f.m.GetFileData(folder, f.path)
+
+	return data, err
 }
 
 // Unmount attempts to unmount the provided FUSE mount point, forcibly
