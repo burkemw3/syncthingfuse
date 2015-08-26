@@ -114,7 +114,8 @@ func main() {
 
 	m = model.NewModel()
 
-	connectionSvc := connections.NewConnectionSvc(cfg, myID, m, discoverer, tlsCfg, tlsDefaultCommonName, nil, nil)
+	connectionSvc := connections.NewConnectionSvc(cfg, myID, m, tlsCfg, tlsDefaultCommonName, nil, nil)
+	connectionSvc.SetDiscoverer(discoverer)
 	mainSvc.Add(connectionSvc)
 
 	l.Infoln("Started ...")
