@@ -152,18 +152,26 @@ func (m *Model) Index(deviceID protocol.DeviceID, folder string, files []protoco
 
 	for _, file := range files {
 		if file.IsDeleted() {
-			l.Debugln("model Index: peer has deleted file", file.Name)
+			if debug {
+				l.Debugln("model Index: peer has deleted file", file.Name)
+			}
 			continue
 		}
 		if file.IsInvalid() {
-			l.Debugln("model Index: peer has invalid file", file.Name)
+			if debug {
+				l.Debugln("model Index: peer has invalid file", file.Name)
+			}
 			continue
 		}
 		if file.IsSymlink() {
-			l.Debugln("model Index: peer has symlink", file.Name)
+			if debug {
+				l.Debugln("model Index: peer has symlink", file.Name)
+			}
 			continue
 		}
-		l.Debugln("model Index: peer has file/dir", file.Name)
+		if debug {
+			l.Debugln("model Index: peer has file/dir", file.Name)
+		}
 
 		// Add to primary lookup
 		m.entries[folder][file.Name] = file
