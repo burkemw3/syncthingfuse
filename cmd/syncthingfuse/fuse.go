@@ -117,7 +117,9 @@ func (d Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	if debugFuse {
 		l.Debugln("Dir Attr")
 	}
+	entry := d.m.GetEntry(folder, d.path)
 	a.Mode = os.ModeDir | 0555
+	a.Mtime = time.Unix(entry.Modified, 0)
 	return nil
 }
 
@@ -176,7 +178,7 @@ func (f File) Attr(ctx context.Context, a *fuse.Attr) error {
 	entry := f.m.GetEntry(folder, f.path)
 
 	a.Mode = 0444
-	a.Mtime = time.Now()
+	a.Mtime = time.Unix(entry.Modified, 0)
 	a.Size = uint64(entry.Size())
 	return nil
 }
