@@ -5,12 +5,15 @@ Filled with lots of crappy code, for now :(
 TODO
 ----
 
-- long running process
+- FUSE
   - update Model from more than one peer
-  - cache file contents
+  - cache file contents (will need to switch to persistent local model)
   - should probably prevent spotlight indexing (metadata_never_index)
+  - support Syncthing Folders
   - support symlinks
   - would be nice to allow some files to be indexed. maybe we can detect the spotlight process and index conditionally
+  - show status information in special FUSE files
+- Figure out releasing, installing, configuring, updating, etc
 - CLI
   - manage configuration
 - Pin files for offline
