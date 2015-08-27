@@ -193,6 +193,93 @@ func (m *Model) Index(deviceID protocol.DeviceID, folder string, files []protoco
 
 // An index update was received from the peer device
 func (m *Model) IndexUpdate(deviceID protocol.DeviceID, folder string, files []protocol.FileInfo, flags uint32, options []protocol.Option) {
+	if debug {
+		l.Debugln("model: receiving index from device", deviceID, "for folder", folder)
+	}
+
+	m.fmut.Lock()
+
+	_, ok := m.entries[folder]
+	if !ok {
+		m.entries[folder] = make(map[string]protocol.FileInfo)
+		m.childLookup[folder] = make(map[string][]string)
+	}
+
+	for _, file := range files {
+		if file.IsDeleted() {
+			if debug {
+				l.Debugln("model Index: peer has deleted file", file.Name)
+			}
+			m.removeEntryFromLocalModel(folder, file)
+			continue
+		}
+		if file.IsInvalid() {
+			if debug {
+				l.Debugln("model IndexUpdate: peer has invalid file", file.Name, "doing nothing")
+			}
+			continue
+		}
+		if file.IsSymlink() {
+			if debug {
+				l.Debugln("model Index: peer has symlink", file.Name)
+			}
+			m.removeEntryFromLocalModel(folder, file)
+			continue
+		}
+		if debug {
+			l.Debugln("model IndexUpdate: peer has file/dir", file.Name)
+		}
+
+		// Add to/replace in primary lookup
+		m.entries[folder][file.Name] = file
+
+		// add to directory children lookup, if it doesn't exist
+		dir := path.Dir(file.Name)
+		children, ok := m.childLookup[folder][dir]
+		if ok {
+			shouldAdd := true
+			for i := 0; i < len(children); i = i + 1 {
+				if children[i] == file.Name {
+					shouldAdd = false
+					break
+				}
+			}
+			if shouldAdd {
+				// entry not in children lookup yet, so add it
+				m.childLookup[folder][dir] = append(m.childLookup[folder][dir], file.Name)
+			}
+		} else {
+			children := make([]string, 1)
+			children[0] = file.Name
+			m.childLookup[folder][dir] = children
+		}
+	}
+
+	m.fmut.Unlock()
+}
+
+func (m *Model) removeEntryFromLocalModel(folder string, file protocol.FileInfo) {
+	if debug {
+		_, ok := m.entries[folder][file.Name]
+		if ok {
+			l.Debugln("file exists in local model, so removing", file.Name)
+		}
+	}
+	delete(m.entries[folder], file.Name)
+
+	dir := path.Dir(file.Name)
+	children, ok := m.childLookup[folder][dir]
+	if ok {
+		for candidate := 0; candidate < len(children); candidate = candidate + 1 {
+			if children[candidate] == file.Name {
+				indexAndNewLength := len(children) - 1
+				children[candidate] = children[indexAndNewLength]
+				children = children[:indexAndNewLength]
+				m.childLookup[folder][dir] = children
+				break
+			}
+		}
+	}
 }
 
 // A request was made by the peer device

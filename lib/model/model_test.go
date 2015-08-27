@@ -49,6 +49,64 @@ func TestModelSingleIndex(t *testing.T) {
 	assertEntry(t, model.GetEntry(folder, "dir1/dirfile2"), "dir1/dirfile2", 0)
 }
 
+func TestModelSingleIndexUpdate(t *testing.T) {
+	// Arrange
+	model := NewModel()
+
+	deviceID := protocol.DeviceID{}
+	folder := "syncthingfusetest"
+	flags := uint32(0)
+	options := []protocol.Option{}
+
+	files := []protocol.FileInfo{
+		protocol.FileInfo{Name: "unchangedFile"},
+		protocol.FileInfo{Name: "file2dir"},
+		protocol.FileInfo{Name: "removedFile"},
+		protocol.FileInfo{Name: "dir1", Flags: protocol.FlagDirectory},
+		protocol.FileInfo{Name: "dir1/dirfile1"},
+		protocol.FileInfo{Name: "dir1/dirfile2"},
+		protocol.FileInfo{Name: "dir2file", Flags: protocol.FlagDirectory},
+		protocol.FileInfo{Name: "dir2file/file1"},
+		protocol.FileInfo{Name: "dir2file/file2"},
+		protocol.FileInfo{Name: "file2symlink"},
+	}
+	model.Index(deviceID, folder, files, flags, options)
+
+	// Act
+	files = []protocol.FileInfo{
+		protocol.FileInfo{Name: "file2dir", Flags: protocol.FlagDirectory},
+		protocol.FileInfo{Name: "removedFile", Flags: protocol.FlagDeleted},
+		protocol.FileInfo{Name: "dir2file"},
+		protocol.FileInfo{Name: "dir2file/file1", Flags: protocol.FlagDeleted},
+		protocol.FileInfo{Name: "file2symlink", Flags: protocol.FlagSymlink},
+	}
+	model.IndexUpdate(deviceID, folder, files, flags, options)
+
+	// Assert
+	children := model.GetChildren(folder, ".")
+	assertContainsChild(t, children, "unchangedFile", 0)
+	assertContainsChild(t, children, "file2dir", protocol.FlagDirectory)
+	assertContainsChild(t, children, "dir1", protocol.FlagDirectory)
+	assertContainsChild(t, children, "dir2file", 0)
+	if len(children) != 4 {
+		t.Error("expected 4 children, but got", len(children))
+	}
+
+	children = model.GetChildren(folder, "dir1")
+	assertContainsChild(t, children, "dir1/dirfile1", 0)
+	assertContainsChild(t, children, "dir1/dirfile2", 0)
+	if len(children) != 2 {
+		t.Error("expected 2 children, but got", len(children))
+	}
+
+	assertEntry(t, model.GetEntry(folder, "unchangedFile"), "unchangedFile", 0)
+	assertEntry(t, model.GetEntry(folder, "file2dir"), "file2dir", protocol.FlagDirectory)
+	assertEntry(t, model.GetEntry(folder, "dir1"), "dir1", protocol.FlagDirectory)
+	assertEntry(t, model.GetEntry(folder, "dir1/dirfile1"), "dir1/dirfile1", 0)
+	assertEntry(t, model.GetEntry(folder, "dir1/dirfile2"), "dir1/dirfile2", 0)
+	assertEntry(t, model.GetEntry(folder, "dir2file"), "dir2file", 0)
+}
+
 func assertContainsChild(t *testing.T, children []protocol.FileInfo, name string, flags uint32) {
 	for _, child := range children {
 		if child.Name == name && child.Flags == flags {

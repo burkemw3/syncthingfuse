@@ -1,4 +1,4 @@
-Can list a file (not sure about folders) from a peer.
+Can list directory contents and show file contents from one peer.
 
 Filled with lots of crappy code, for now :(
 
@@ -6,8 +6,7 @@ TODO
 ----
 
 - long running process
-  - serve file contents (rwfolder.go pullerRoutine)
-  - update Model from peers
+  - update Model from more than one peer
   - cache file contents
   - should probably prevent spotlight indexing (metadata_never_index)
   - support symlinks

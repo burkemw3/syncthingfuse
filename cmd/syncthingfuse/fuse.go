@@ -18,7 +18,6 @@ import (
 	"bazil.org/fuse/fs"
 	_ "bazil.org/fuse/fs/fstestutil"
 	"github.com/burkemw3/syncthing-fuse/lib/model"
-	"github.com/syncthing/protocol"
 	"golang.org/x/net/context"
 )
 
@@ -75,26 +74,6 @@ var (
 	folder    = "syncthingfusetest"
 	debugFuse = strings.Contains(os.Getenv("STTRACE"), "fuse") || os.Getenv("STTRACE") == "all"
 )
-
-func makeModel() *model.Model {
-	m := model.NewModel()
-
-	deviceID := protocol.DeviceID{}
-	flags := uint32(0)
-	options := []protocol.Option{}
-
-	files := []protocol.FileInfo{
-		protocol.FileInfo{Name: "file1"},
-		protocol.FileInfo{Name: "file2"},
-		protocol.FileInfo{Name: "dir1", Flags: protocol.FlagDirectory},
-		protocol.FileInfo{Name: "dir1/dirfile1"},
-		protocol.FileInfo{Name: "dir1/dirfile2"},
-	}
-
-	m.Index(deviceID, folder, files, flags, options)
-
-	return m
-}
 
 type FS struct {
 	m *model.Model
