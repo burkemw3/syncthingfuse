@@ -58,27 +58,30 @@ func TestModelSingleIndexUpdate(t *testing.T) {
 	flags := uint32(0)
 	options := []protocol.Option{}
 
+	version := protocol.Vector{protocol.Counter{1, 0}}
+
 	files := []protocol.FileInfo{
-		protocol.FileInfo{Name: "unchangedFile"},
-		protocol.FileInfo{Name: "file2dir"},
-		protocol.FileInfo{Name: "removedFile"},
-		protocol.FileInfo{Name: "dir1", Flags: protocol.FlagDirectory},
-		protocol.FileInfo{Name: "dir1/dirfile1"},
-		protocol.FileInfo{Name: "dir1/dirfile2"},
-		protocol.FileInfo{Name: "dir2file", Flags: protocol.FlagDirectory},
-		protocol.FileInfo{Name: "dir2file/file1"},
-		protocol.FileInfo{Name: "dir2file/file2"},
-		protocol.FileInfo{Name: "file2symlink"},
+		protocol.FileInfo{Name: "unchangedFile", Version: version},
+		protocol.FileInfo{Name: "file2dir", Version: version},
+		protocol.FileInfo{Name: "removedFile", Version: version},
+		protocol.FileInfo{Name: "dir1", Flags: protocol.FlagDirectory, Version: version},
+		protocol.FileInfo{Name: "dir1/dirfile1", Version: version},
+		protocol.FileInfo{Name: "dir1/dirfile2", Version: version},
+		protocol.FileInfo{Name: "dir2file", Flags: protocol.FlagDirectory, Version: version},
+		protocol.FileInfo{Name: "dir2file/file1", Version: version},
+		protocol.FileInfo{Name: "dir2file/file2", Version: version},
+		protocol.FileInfo{Name: "file2symlink", Version: version},
 	}
 	model.Index(deviceID, folder, files, flags, options)
 
 	// Act
+	version = protocol.Vector{protocol.Counter{1, 1}}
 	files = []protocol.FileInfo{
-		protocol.FileInfo{Name: "file2dir", Flags: protocol.FlagDirectory},
-		protocol.FileInfo{Name: "removedFile", Flags: protocol.FlagDeleted},
-		protocol.FileInfo{Name: "dir2file"},
-		protocol.FileInfo{Name: "dir2file/file1", Flags: protocol.FlagDeleted},
-		protocol.FileInfo{Name: "file2symlink", Flags: protocol.FlagSymlink},
+		protocol.FileInfo{Name: "file2dir", Flags: protocol.FlagDirectory, Version: version},
+		protocol.FileInfo{Name: "removedFile", Flags: protocol.FlagDeleted, Version: version},
+		protocol.FileInfo{Name: "dir2file", Version: version},
+		protocol.FileInfo{Name: "dir2file/file1", Flags: protocol.FlagDeleted, Version: version},
+		protocol.FileInfo{Name: "file2symlink", Flags: protocol.FlagSymlink, Version: version},
 	}
 	model.IndexUpdate(deviceID, folder, files, flags, options)
 

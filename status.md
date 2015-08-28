@@ -1,4 +1,4 @@
-Can list directory contents and show file contents from one peer.
+Can list directory contents and show file contents from multiple peers!
 
 Filled with lots of crappy code, for now :(
 
@@ -6,7 +6,6 @@ TODO
 ----
 
 - FUSE
-  - update Model from more than one peer
   - cache file contents (will need to switch to persistent local model)
   - should probably prevent spotlight indexing (metadata_never_index)
   - support Syncthing Folders
