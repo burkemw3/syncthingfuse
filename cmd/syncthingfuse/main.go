@@ -110,12 +110,19 @@ func main() {
 	})
 	mainSvc.ServeBackground()
 
-	discoverer := startDiscovery(cfg)
-
 	m = model.NewModel()
 
-	connectionSvc := connections.NewConnectionSvc(cfg, myID, m, tlsCfg, tlsDefaultCommonName, nil, nil)
-	connectionSvc.SetDiscoverer(discoverer)
+	opts := cfg.Options()
+	uri, err := url.Parse(opts.ListenAddress[0])
+	if err != nil {
+		l.Fatalf("Failed to parse listen address %s: %v", opts.ListenAddress[0], err)
+	}
+	addr, err := net.ResolveTCPAddr("tcp", uri.Host)
+	if err != nil {
+		l.Fatalln("Bad listen address:", err)
+	}
+
+	connectionSvc := connections.NewConnectionSvc(cfg, myID, m, tlsCfg, tlsDefaultCommonName, nil, nil, addr)
 	mainSvc.Add(connectionSvc)
 
 	l.Infoln("Started ...")
