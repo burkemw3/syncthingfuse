@@ -1,35 +1,47 @@
 package model
 
 import (
+	"bytes"
+	"crypto/sha1"
+	"encoding/gob"
 	"fmt"
+	"io/ioutil"
+	"os"
 	"path"
 
 	"github.com/syncthing/protocol"
+	"github.com/syncthing/syncthing/lib/config"
 	stmodel "github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/sync"
 )
 
 type Model struct {
+	cfg *config.Wrapper
+
 	protoConn map[protocol.DeviceID]stmodel.Connection
 	pmut      sync.RWMutex // protects protoConn and rawConn. must not be acquired before fmut
 
-	entries       map[string]map[string]protocol.FileInfo
-	devicesByFile map[string]map[string][]protocol.DeviceID
-	filesByDevice map[string]map[protocol.DeviceID][]string
-	childLookup   map[string]map[string][]string
-	fmut          sync.RWMutex // protects file information. must not be acquired after pmut
+	entries           map[string]map[string]protocol.FileInfo
+	devicesByFile     map[string]map[string][]protocol.DeviceID
+	filesByDevice     map[string]map[protocol.DeviceID][]string
+	childLookup       map[string]map[string][]string
+	cachedFilesByPath map[string]map[string]string // st.Folder.Name to st.File.Name to local disk file name
+	fmut              sync.RWMutex                 // protects file information. must not be acquired after pmut
 }
 
-func NewModel() *Model {
+func NewModel(cfg *config.Wrapper) *Model {
 	return &Model{
+		cfg: cfg,
+
 		protoConn: make(map[protocol.DeviceID]stmodel.Connection),
 		pmut:      sync.NewRWMutex(),
 
-		entries:       make(map[string]map[string]protocol.FileInfo),
-		devicesByFile: make(map[string]map[string][]protocol.DeviceID),
-		filesByDevice: make(map[string]map[protocol.DeviceID][]string),
-		childLookup:   make(map[string]map[string][]string),
-		fmut:          sync.NewRWMutex(),
+		entries:           make(map[string]map[string]protocol.FileInfo),
+		devicesByFile:     make(map[string]map[string][]protocol.DeviceID),
+		filesByDevice:     make(map[string]map[protocol.DeviceID][]string),
+		childLookup:       make(map[string]map[string][]string),
+		cachedFilesByPath: make(map[string]map[string]string),
+		fmut:              sync.NewRWMutex(),
 	}
 }
 
@@ -82,16 +94,33 @@ func (m *Model) GetEntry(folder string, path string) protocol.FileInfo {
 	return entry
 }
 
-func (m *Model) GetFileData(folder string, path string) ([]byte, error) {
+func (m *Model) GetFileData(folder string, filepath string) ([]byte, error) {
 	m.fmut.RLock()
 
-	entry := m.entries[folder][path]
+	entry := m.entries[folder][filepath]
 	if debug {
-		l.Debugln("Creating data for", folder, path, "size", entry.Size())
+		l.Debugln("Creating data for", folder, filepath, "size", entry.Size())
 	}
+
+	// check disk cache
+	expectedDiskCacheName := m.getDiskCacheName(folder, entry)
+	diskCachePath := path.Join(path.Dir(m.cfg.ConfigPath()), folder, expectedDiskCacheName)
+	if foundDiskCacheName, ok := m.cachedFilesByPath[folder][filepath]; ok {
+		if foundDiskCacheName == expectedDiskCacheName {
+			// found a good match
+			data, _ := ioutil.ReadFile(diskCachePath) // TODO check error
+			m.fmut.RUnlock()
+			return data, nil
+		}
+	}
+
+	// didn't find, gonna have to modify cache, so drop read lock, and re-acquire write lock later
+	m.fmut.RUnlock()
+
 	data := make([]byte, entry.Size())
 
 	for i, block := range entry.Blocks {
+		// TODO fetch blocks in parallel
 		if debug {
 			l.Debugln("Fetching block", i, "size", block.Size)
 		}
@@ -101,8 +130,9 @@ func (m *Model) GetFileData(folder string, path string) ([]byte, error) {
 		m.pmut.RLock()
 		var blockData []byte
 		err := protocol.ErrNoSuchFile
+		// TODO use the devicesByFile lookup
 		for _, conn := range m.protoConn {
-			blockData, err = conn.Request(folder, path, byteOffset, int(block.Size), block.Hash, flags, []protocol.Option{})
+			blockData, err = conn.Request(folder, filepath, byteOffset, int(block.Size), block.Hash, flags, []protocol.Option{})
 			if err == nil {
 				break
 			}
@@ -114,17 +144,41 @@ func (m *Model) GetFileData(folder string, path string) ([]byte, error) {
 
 		// TODO check hash
 
-		if debug {
-			l.Debugln("Putting data at", byteOffset)
-		}
 		for j, k := byteOffset, int32(0); k < block.Size; j, k = j+1, k+1 {
 			data[j] = blockData[k]
 		}
 	}
 
-	m.fmut.RUnlock()
+	m.fmut.Lock()
+
+	if foundDiskCacheName, ok := m.cachedFilesByPath[folder][filepath]; ok {
+		if foundDiskCacheName != expectedDiskCacheName {
+			oldDiskCachePath := path.Join(path.Dir(m.cfg.ConfigPath()), folder, foundDiskCacheName)
+			os.Remove(oldDiskCachePath)
+		}
+	}
+
+	m.cachedFilesByPath[folder][filepath] = expectedDiskCacheName
+	ioutil.WriteFile(diskCachePath, data, 0644)
+
+	m.fmut.Unlock()
 
 	return data, nil
+}
+
+func (m *Model) getDiskCacheName(folder string, file protocol.FileInfo) string {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	enc.Encode(folder)
+	enc.Encode(file.Name)
+	enc.Encode(file.Version)
+
+	h := sha1.New()
+	h.Write(buf.Bytes())
+
+	diskCacheName := fmt.Sprintf("%x", h.Sum(nil))
+
+	return diskCacheName
 }
 
 func (m *Model) GetChildren(folder string, path string) []protocol.FileInfo {
@@ -196,6 +250,11 @@ func (m *Model) updateIndex(deviceID protocol.DeviceID, folder string, files []p
 		m.childLookup[folder] = make(map[string][]string)
 		m.devicesByFile[folder] = make(map[string][]protocol.DeviceID)
 		m.filesByDevice[folder] = make(map[protocol.DeviceID][]string)
+		m.cachedFilesByPath[folder] = make(map[string]string)
+
+		diskCacheFolder := path.Join(path.Dir(m.cfg.ConfigPath()), folder)
+		os.RemoveAll(diskCacheFolder)
+		os.Mkdir(diskCacheFolder, 0744)
 	}
 
 	for _, file := range files {
@@ -224,6 +283,7 @@ func (m *Model) updateIndex(deviceID protocol.DeviceID, folder string, files []p
 			}
 			m.removeEntryFromLocalModel(folder, file.Name)
 			m.addToLocalModel(deviceID, folder, file)
+			// TODO probably want to re-fill disk cache if file small enough (10MB?) or within certain size (5%?)
 			continue
 		}
 	}
@@ -354,6 +414,12 @@ func (m *Model) removeEntryFromLocalModel(folder string, filePath string) {
 				break
 			}
 		}
+	}
+
+	// remove from disk cache
+	if foundDiskCacheName, ok := m.cachedFilesByPath[folder][filePath]; ok {
+		oldDiskCachePath := path.Join(path.Dir(m.cfg.ConfigPath()), folder, foundDiskCacheName)
+		os.Remove(oldDiskCachePath)
 	}
 }
 

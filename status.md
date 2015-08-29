@@ -1,4 +1,8 @@
-Can list directory contents and show file contents from multiple peers!
+A special FUSE client for Syncthing
+
+- doesn't try to stay in full sync, just cache files locally when they are read
+- cache doesn't work across SyncthingFUSE restarts, but does work when SyncthingFUSE isn't connected to other peers
+- read-only currently
 
 Filled with lots of crappy code, for now :(
 
@@ -6,7 +10,7 @@ TODO
 ----
 
 - FUSE
-  - cache file contents (will need to switch to persistent local model)
+  - cache file contents across process restarts (need to switch to persistent local model)
   - should probably prevent spotlight indexing (metadata_never_index)
   - support Syncthing Folders
   - support symlinks

@@ -110,7 +110,7 @@ func main() {
 	})
 	mainSvc.ServeBackground()
 
-	m = model.NewModel()
+	m = model.NewModel(cfg)
 
 	opts := cfg.Options()
 	uri, err := url.Parse(opts.ListenAddress[0])
