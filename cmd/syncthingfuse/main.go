@@ -5,15 +5,15 @@ import (
 	"flag"
 	"fmt"
 	"net"
-	"net/url"
 	"os"
 
 	"github.com/burkemw3/syncthing-fuse/lib/model"
 	"github.com/calmh/logger"
-	"github.com/syncthing/protocol"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/connections"
 	"github.com/syncthing/syncthing/lib/discover"
+	"github.com/syncthing/syncthing/lib/osutil"
+	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/thejerf/suture"
 )
 
@@ -23,14 +23,13 @@ var (
 )
 
 var (
-	cfg        *config.Wrapper
-	myID       protocol.DeviceID
-	confDir    string
-	stop       = make(chan int)
-	discoverer *discover.Discoverer
-	cert       tls.Certificate
-	lans       []*net.IPNet
-	m          *model.Model
+	cfg     *config.Wrapper
+	myID    protocol.DeviceID
+	confDir string
+	stop    = make(chan int)
+	cert    tls.Certificate
+	lans    []*net.IPNet
+	m       *model.Model
 )
 
 const (
@@ -112,17 +111,12 @@ func main() {
 
 	m = model.NewModel(cfg)
 
-	opts := cfg.Options()
-	uri, err := url.Parse(opts.ListenAddress[0])
-	if err != nil {
-		l.Fatalf("Failed to parse listen address %s: %v", opts.ListenAddress[0], err)
-	}
-	addr, err := net.ResolveTCPAddr("tcp", uri.Host)
-	if err != nil {
-		l.Fatalln("Bad listen address:", err)
-	}
+	cachedDiscovery := startDiscovery()
+	mainSvc.Add(cachedDiscovery)
 
-	connectionSvc := connections.NewConnectionSvc(cfg, myID, m, tlsCfg, tlsDefaultCommonName, nil, nil, addr)
+	lans, _ := osutil.GetLans()
+
+	connectionSvc := connections.NewConnectionSvc(cfg, myID, m, tlsCfg, cachedDiscovery, nil /* TODO relaySvc */, bepProtocolName, tlsDefaultCommonName, lans)
 	mainSvc.Add(connectionSvc)
 
 	l.Infoln("Started ...")
@@ -135,32 +129,10 @@ func main() {
 	return
 }
 
-func startDiscovery(cfg *config.Wrapper) *discover.Discoverer {
-	opts := cfg.Options()
-	disc := discover.NewDiscoverer(myID, opts.ListenAddress, nil)
+func startDiscovery() *discover.CachingMux {
+	cachedDiscovery := discover.NewCachingMux()
 
-	if opts.LocalAnnEnabled {
-		l.Infoln("Starting local discovery announcements")
-		disc.StartLocal(opts.LocalAnnPort, opts.LocalAnnMCAddr)
-	}
+	// TODO build discovery MUX
 
-	if opts.GlobalAnnEnabled {
-		l.Infoln("Starting global discovery announcements")
-
-		uri, err := url.Parse(opts.ListenAddress[0])
-		if err != nil {
-			l.Fatalf("Failed to parse listen address %s: %v", opts.ListenAddress[0], err)
-		}
-
-		addr, err := net.ResolveTCPAddr("tcp", uri.Host)
-		if err != nil {
-			l.Fatalln("Bad listen address:", err)
-		}
-
-		localPort := addr.Port
-
-		disc.StartGlobal(opts.GlobalAnnServers, uint16(localPort))
-	}
-
-	return disc
+	return cachedDiscovery
 }

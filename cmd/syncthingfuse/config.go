@@ -5,9 +5,9 @@ import (
 	"net"
 	"os"
 
-	"github.com/syncthing/protocol"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/osutil"
+	"github.com/syncthing/syncthing/lib/protocol"
 )
 
 func getConfiguration() *config.Wrapper {

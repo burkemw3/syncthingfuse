@@ -3,7 +3,7 @@ package model
 import (
 	"testing"
 
-	"github.com/syncthing/protocol"
+	"github.com/syncthing/syncthing/lib/protocol"
 )
 
 func TestModelSingleIndex(t *testing.T) {
