@@ -1,14 +1,12 @@
 package model
 
 import (
-	"bytes"
-	"crypto/sha1"
-	"encoding/gob"
+	"errors"
 	"fmt"
-	"io/ioutil"
-	"os"
-	"path"
 
+	"github.com/boltdb/bolt"
+	"github.com/burkemw3/syncthing-fuse/lib/fileblockcache"
+	"github.com/burkemw3/syncthing-fuse/lib/filetreecache"
 	"github.com/syncthing/syncthing/lib/config"
 	stmodel "github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -17,32 +15,45 @@ import (
 
 type Model struct {
 	cfg *config.Wrapper
+	db  *bolt.DB
 
 	protoConn map[protocol.DeviceID]stmodel.Connection
 	pmut      sync.RWMutex // protects protoConn and rawConn. must not be acquired before fmut
 
-	entries           map[string]map[string]protocol.FileInfo
-	devicesByFile     map[string]map[string][]protocol.DeviceID
-	filesByDevice     map[string]map[protocol.DeviceID][]string
-	childLookup       map[string]map[string][]string
-	cachedFilesByPath map[string]map[string]string // st.Folder.Name to st.File.Name to local disk file name
-	fmut              sync.RWMutex                 // protects file information. must not be acquired after pmut
+	devicesByFile map[string]map[string][]protocol.DeviceID
+	filesByDevice map[string]map[protocol.DeviceID][]string
+	blockCaches   map[string]*fileblockcache.FileBlockCache
+	treeCaches    map[string]*filetreecache.FileTreeCache
+	fmut          sync.RWMutex // protects file information. must not be acquired after pmut
 }
 
-func NewModel(cfg *config.Wrapper) *Model {
-	return &Model{
+func NewModel(cfg *config.Wrapper, db *bolt.DB) *Model {
+	m := &Model{
 		cfg: cfg,
+		db:  db,
 
 		protoConn: make(map[protocol.DeviceID]stmodel.Connection),
 		pmut:      sync.NewRWMutex(),
 
-		entries:           make(map[string]map[string]protocol.FileInfo),
-		devicesByFile:     make(map[string]map[string][]protocol.DeviceID),
-		filesByDevice:     make(map[string]map[protocol.DeviceID][]string),
-		childLookup:       make(map[string]map[string][]string),
-		cachedFilesByPath: make(map[string]map[string]string),
-		fmut:              sync.NewRWMutex(),
+		blockCaches:   make(map[string]*fileblockcache.FileBlockCache),
+		treeCaches:    make(map[string]*filetreecache.FileTreeCache),
+		devicesByFile: make(map[string]map[string][]protocol.DeviceID),
+		filesByDevice: make(map[string]map[protocol.DeviceID][]string),
+		fmut:          sync.NewRWMutex(),
 	}
+
+	for _, folderCfg := range m.cfg.Folders() {
+		folder := folderCfg.ID
+
+		cacheSize := int32(1024 * 1024 * 512) // 500 MB for now. TODO configure
+		m.blockCaches[folder] = fileblockcache.NewFileBlockCache(m.cfg, db, folder, cacheSize)
+		m.treeCaches[folder] = filetreecache.NewFileTreeCache(m.cfg, db, folder)
+
+		m.devicesByFile[folder] = make(map[string][]protocol.DeviceID)
+		m.filesByDevice[folder] = make(map[protocol.DeviceID][]string)
+	}
+
+	return m
 }
 
 func (m *Model) AddConnection(conn stmodel.Connection) {
@@ -87,7 +98,7 @@ func (m *Model) IsPaused(deviceID protocol.DeviceID) bool {
 func (m *Model) GetEntry(folder string, path string) protocol.FileInfo {
 	m.fmut.RLock()
 
-	entry := m.entries[folder][path]
+	entry, _ := m.treeCaches[folder].GetEntry(path)
 
 	m.fmut.RUnlock()
 
@@ -95,90 +106,73 @@ func (m *Model) GetEntry(folder string, path string) protocol.FileInfo {
 }
 
 func (m *Model) GetFileData(folder string, filepath string) ([]byte, error) {
-	m.fmut.RLock()
+	// can probably make lock acquisition less contentious here
+	m.fmut.Lock()
+	m.pmut.RLock()
 
-	entry := m.entries[folder][filepath]
-	if debug {
-		l.Debugln("Creating data for", folder, filepath, "size", entry.Size())
+	entry, found := m.treeCaches[folder].GetEntry(filepath)
+	if false == found {
+		m.pmut.RUnlock()
+		m.fmut.Unlock()
+		l.Warnln("File not found", folder, filepath)
+		return []byte(""), protocol.ErrNoSuchFile
 	}
-
-	// check disk cache
-	expectedDiskCacheName := m.getDiskCacheName(folder, entry)
-	diskCachePath := path.Join(path.Dir(m.cfg.ConfigPath()), folder, expectedDiskCacheName)
-	if foundDiskCacheName, ok := m.cachedFilesByPath[folder][filepath]; ok {
-		if foundDiskCacheName == expectedDiskCacheName {
-			// found a good match
-			data, _ := ioutil.ReadFile(diskCachePath) // TODO check error
-			m.fmut.RUnlock()
-			return data, nil
-		}
-	}
-
-	// didn't find, gonna have to modify cache, so drop read lock, and re-acquire write lock later
-	m.fmut.RUnlock()
 
 	data := make([]byte, entry.Size())
 
 	for i, block := range entry.Blocks {
-		// TODO fetch blocks in parallel
-		if debug {
-			l.Debugln("Fetching block", i, "size", block.Size)
-		}
+		blockData, blockFound := m.blockCaches[folder].GetCachedBlockData(block.Hash)
+
 		byteOffset := int64(i * protocol.BlockSize)
 		flags := uint32(0)
 
-		m.pmut.RLock()
-		var blockData []byte
-		err := protocol.ErrNoSuchFile
-		// TODO use the devicesByFile lookup
-		for _, conn := range m.protoConn {
-			blockData, err = conn.Request(folder, filepath, byteOffset, int(block.Size), block.Hash, flags, []protocol.Option{})
-			if err == nil {
-				break
+		if false == blockFound {
+			if debug {
+				l.Debugln("Fetching block", i, "size", block.Size, "for", folder, filepath)
 			}
-		}
-		m.pmut.RUnlock()
-		if err != nil {
-			return blockData, err
-		}
 
-		// TODO check hash
+			// Get block from a device
+			found := false
+			for _, deviceWithFile := range m.devicesByFile[folder][filepath] {
+				if debug {
+					l.Debugln("Trying to fetch block", i, "for", folder, filepath, "from device", deviceWithFile)
+				}
+				conn := m.protoConn[deviceWithFile]
+				requestedData, requestError := conn.Request(folder, filepath, byteOffset, int(block.Size), block.Hash, flags, []protocol.Option{})
+				if requestError == nil {
+					blockData = requestedData
+					found = true
+					break
+				}
+				if debug {
+					l.Debugln("Error fetching block", i, "from device", deviceWithFile, ":", requestError)
+				}
+			}
+
+			if false == found {
+				m.pmut.RUnlock()
+				m.fmut.Unlock()
+				l.Warnln("Can't get block", i, "from any devices for", folder, filepath)
+				return []byte(""), errors.New("can't get block from any devices")
+			}
+
+			// TODO check hash
+
+			// Add block to cache
+			m.blockCaches[folder].AddCachedFileData(block, blockData)
+		} else if debug {
+			l.Debugln("Found block", i, "for", folder, filepath)
+		}
 
 		for j, k := byteOffset, int32(0); k < block.Size; j, k = j+1, k+1 {
 			data[j] = blockData[k]
 		}
 	}
 
-	m.fmut.Lock()
-
-	if foundDiskCacheName, ok := m.cachedFilesByPath[folder][filepath]; ok {
-		if foundDiskCacheName != expectedDiskCacheName {
-			oldDiskCachePath := path.Join(path.Dir(m.cfg.ConfigPath()), folder, foundDiskCacheName)
-			os.Remove(oldDiskCachePath)
-		}
-	}
-
-	m.cachedFilesByPath[folder][filepath] = expectedDiskCacheName
-	ioutil.WriteFile(diskCachePath, data, 0644)
-
+	m.pmut.RUnlock()
 	m.fmut.Unlock()
 
 	return data, nil
-}
-
-func (m *Model) getDiskCacheName(folder string, file protocol.FileInfo) string {
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-	enc.Encode(folder)
-	enc.Encode(file.Name)
-	enc.Encode(file.Version)
-
-	h := sha1.New()
-	h.Write(buf.Bytes())
-
-	diskCacheName := fmt.Sprintf("%x", h.Sum(nil))
-
-	return diskCacheName
 }
 
 func (m *Model) GetChildren(folder string, path string) []protocol.FileInfo {
@@ -186,10 +180,10 @@ func (m *Model) GetChildren(folder string, path string) []protocol.FileInfo {
 
 	// TODO assert is directory?
 
-	entries := m.childLookup[folder][path]
+	entries := m.treeCaches[folder].GetChildren(path)
 	result := make([]protocol.FileInfo, len(entries))
 	for i, childPath := range entries {
-		result[i] = m.entries[folder][childPath]
+		result[i], _ = m.treeCaches[folder].GetEntry(childPath)
 	}
 
 	m.fmut.RUnlock()
@@ -244,21 +238,17 @@ func (m *Model) IndexUpdate(deviceID protocol.DeviceID, folder string, files []p
 func (m *Model) updateIndex(deviceID protocol.DeviceID, folder string, files []protocol.FileInfo) {
 	m.fmut.Lock()
 
-	_, ok := m.entries[folder]
+	treeCache, ok := m.treeCaches[folder]
 	if !ok {
-		m.entries[folder] = make(map[string]protocol.FileInfo)
-		m.childLookup[folder] = make(map[string][]string)
-		m.devicesByFile[folder] = make(map[string][]protocol.DeviceID)
-		m.filesByDevice[folder] = make(map[protocol.DeviceID][]string)
-		m.cachedFilesByPath[folder] = make(map[string]string)
-
-		diskCacheFolder := path.Join(path.Dir(m.cfg.ConfigPath()), folder)
-		os.RemoveAll(diskCacheFolder)
-		os.Mkdir(diskCacheFolder, 0744)
+		if debug {
+			l.Debugln("folder", folder, "from", deviceID.String(), "not configured, skipping")
+		}
+		m.fmut.Unlock()
+		return
 	}
 
 	for _, file := range files {
-		entry, existsInLocalModel := m.entries[folder][file.Name]
+		entry, existsInLocalModel := treeCache.GetEntry(file.Name)
 
 		if !existsInLocalModel {
 			if debug {
@@ -319,19 +309,7 @@ func (m *Model) addToLocalModel(deviceID protocol.DeviceID, folder string, file 
 		l.Debugln("peer", deviceID.String(), "has file, adding", file.Name)
 	}
 
-	// Add to primary lookup
-	m.entries[folder][file.Name] = file
-
-	// add to directory children lookup
-	dir := path.Dir(file.Name)
-	_, ok := m.childLookup[folder][dir]
-	if ok {
-		m.childLookup[folder][dir] = append(m.childLookup[folder][dir], file.Name)
-	} else {
-		children := make([]string, 1)
-		children[0] = file.Name
-		m.childLookup[folder][dir] = children
-	}
+	m.treeCaches[folder].AddEntry(file)
 
 	m.addPeerForEntry(deviceID, folder, file)
 }
@@ -361,20 +339,20 @@ func (m *Model) addPeerForEntry(deviceID protocol.DeviceID, folder string, file 
 // remove any children and self from local model
 // requires write lock on model.fmut before entry
 func (m *Model) removeEntryFromLocalModel(folder string, filePath string) {
-	entries := m.childLookup[folder][filePath]
+	entries := m.treeCaches[folder].GetChildren(filePath)
 	for _, childPath := range entries {
 		m.removeEntryFromLocalModel(folder, childPath)
 	}
 
 	if debug {
-		_, ok := m.entries[folder][filePath]
+		_, ok := m.treeCaches[folder].GetEntry(filePath)
 		if ok {
 			l.Debugln("file exists in local model, so removing", filePath)
 		}
 	}
 
 	// remove file entry
-	delete(m.entries[folder], filePath)
+	m.treeCaches[folder].RemoveEntry(filePath)
 
 	// remove files by device lookup
 	for _, device := range m.devicesByFile[folder][filePath] {
@@ -400,27 +378,6 @@ func (m *Model) removeEntryFromLocalModel(folder string, filePath string) {
 
 	// remove devices by file lookup
 	delete(m.devicesByFile[folder], filePath)
-
-	// remove from parent lookup
-	dir := path.Dir(filePath)
-	children, ok := m.childLookup[folder][dir]
-	if ok {
-		for candidate := 0; candidate < len(children); candidate = candidate + 1 {
-			if children[candidate] == filePath {
-				indexAndNewLength := len(children) - 1
-				children[candidate] = children[indexAndNewLength]
-				children = children[:indexAndNewLength]
-				m.childLookup[folder][dir] = children
-				break
-			}
-		}
-	}
-
-	// remove from disk cache
-	if foundDiskCacheName, ok := m.cachedFilesByPath[folder][filePath]; ok {
-		oldDiskCachePath := path.Join(path.Dir(m.cfg.ConfigPath()), folder, foundDiskCacheName)
-		os.Remove(oldDiskCachePath)
-	}
 }
 
 // A request was made by the peer device

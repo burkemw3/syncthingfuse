@@ -1,17 +1,37 @@
 package model
 
 import (
+	"io/ioutil"
+	"os"
+	"path"
 	"testing"
 
+	"github.com/boltdb/bolt"
+	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
 
 func TestModelSingleIndex(t *testing.T) {
-	// Arrange
-	model := NewModel()
+	// init
+	dir, _ := ioutil.TempDir("", "stf-mt")
+	defer os.RemoveAll(dir)
+	configFile, _ := ioutil.TempFile(dir, "config")
+	deviceID, _ := protocol.DeviceIDFromString("FFR6LPZ-7K4PTTV-UXQSMUU-CPQ5YWH-OEDFIIQ-JUG777G-2YQXXR5-YD6AWQR")
+	realCfg := config.New(deviceID)
+	cfg := config.Wrap(configFile.Name(), realCfg)
+	t.Logf("config path %s\n", configFile.Name())
 
-	deviceID := protocol.DeviceID{}
+	databasePath := path.Join(path.Dir(cfg.ConfigPath()), "boltdb")
+	database, _ := bolt.Open(databasePath, 0600, nil)
+
 	folder := "syncthingfusetest"
+	folderCfg := config.FolderConfiguration{
+		ID: folder,
+	}
+	cfg.SetFolder(folderCfg)
+
+	// Arrange
+	model := NewModel(cfg, database)
 	flags := uint32(0)
 	options := []protocol.Option{}
 
@@ -49,12 +69,89 @@ func TestModelSingleIndex(t *testing.T) {
 	assertEntry(t, model.GetEntry(folder, "dir1/dirfile2"), "dir1/dirfile2", 0)
 }
 
-func TestModelSingleIndexUpdate(t *testing.T) {
-	// Arrange
-	model := NewModel()
+func TestModelIndexWithRestart(t *testing.T) {
+	// init
+	dir, _ := ioutil.TempDir("", "stf-mt")
+	defer os.RemoveAll(dir)
+	configFile, _ := ioutil.TempFile(dir, "config")
+	deviceID, _ := protocol.DeviceIDFromString("FFR6LPZ-7K4PTTV-UXQSMUU-CPQ5YWH-OEDFIIQ-JUG777G-2YQXXR5-YD6AWQR")
+	realCfg := config.New(deviceID)
+	cfg := config.Wrap(configFile.Name(), realCfg)
+	t.Logf("config path %s\n", configFile.Name())
 
-	deviceID := protocol.DeviceID{}
+	databasePath := path.Join(path.Dir(cfg.ConfigPath()), "boltdb")
+	database, _ := bolt.Open(databasePath, 0600, nil)
+
 	folder := "syncthingfusetest"
+	folderCfg := config.FolderConfiguration{
+		ID: folder,
+	}
+	cfg.SetFolder(folderCfg)
+
+	// Arrange
+	model := NewModel(cfg, database)
+	flags := uint32(0)
+	options := []protocol.Option{}
+
+	files := []protocol.FileInfo{
+		protocol.FileInfo{Name: "file1"},
+		protocol.FileInfo{Name: "file2"},
+		protocol.FileInfo{Name: "dir1", Flags: protocol.FlagDirectory},
+		protocol.FileInfo{Name: "dir1/dirfile1"},
+		protocol.FileInfo{Name: "dir1/dirfile2"},
+	}
+
+	model.Index(deviceID, folder, files, flags, options)
+
+	// Act (restart db and model)
+	database.Close()
+	database, _ = bolt.Open(databasePath, 0600, nil)
+	model = NewModel(cfg, database)
+
+	// Assert
+	children := model.GetChildren(folder, ".")
+	assertContainsChild(t, children, "file2", 0)
+	assertContainsChild(t, children, "file2", 0)
+	assertContainsChild(t, children, "dir1", protocol.FlagDirectory)
+	if len(children) != 3 {
+		t.Error("expected 3 children, but got", len(children))
+	}
+
+	children = model.GetChildren(folder, "dir1")
+	assertContainsChild(t, children, "dir1/dirfile1", 0)
+	assertContainsChild(t, children, "dir1/dirfile2", 0)
+	if len(children) != 2 {
+		t.Error("expected 2 children, but got", len(children))
+	}
+
+	assertEntry(t, model.GetEntry(folder, "file1"), "file1", 0)
+	assertEntry(t, model.GetEntry(folder, "file2"), "file2", 0)
+	assertEntry(t, model.GetEntry(folder, "dir1"), "dir1", protocol.FlagDirectory)
+	assertEntry(t, model.GetEntry(folder, "dir1/dirfile1"), "dir1/dirfile1", 0)
+	assertEntry(t, model.GetEntry(folder, "dir1/dirfile2"), "dir1/dirfile2", 0)
+}
+
+func TestModelSingleIndexUpdate(t *testing.T) {
+	// init
+	dir, _ := ioutil.TempDir("", "stf-mt")
+	defer os.RemoveAll(dir)
+	configFile, _ := ioutil.TempFile(dir, "config")
+	deviceID, _ := protocol.DeviceIDFromString("FFR6LPZ-7K4PTTV-UXQSMUU-CPQ5YWH-OEDFIIQ-JUG777G-2YQXXR5-YD6AWQR")
+	realCfg := config.New(deviceID)
+	cfg := config.Wrap(configFile.Name(), realCfg)
+
+	databasePath := path.Join(path.Dir(cfg.ConfigPath()), "boltdb")
+	database, _ := bolt.Open(databasePath, 0600, nil)
+
+	folder := "syncthingfusetest"
+	folderCfg := config.FolderConfiguration{
+		ID: folder,
+	}
+	cfg.SetFolder(folderCfg)
+
+	// Arrange
+	model := NewModel(cfg, database)
+
 	flags := uint32(0)
 	options := []protocol.Option{}
 

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path"
 
+	"github.com/boltdb/bolt"
 	"github.com/burkemw3/syncthing-fuse/lib/model"
 	"github.com/calmh/logger"
 	"github.com/syncthing/syncthing/lib/config"
@@ -109,7 +111,9 @@ func main() {
 	})
 	mainSvc.ServeBackground()
 
-	m = model.NewModel(cfg)
+	database := openDatabase(cfg)
+
+	m = model.NewModel(cfg, database)
 
 	cachedDiscovery := startDiscovery()
 	mainSvc.Add(cachedDiscovery)
@@ -127,6 +131,12 @@ func main() {
 	l.Okln("Exiting")
 
 	return
+}
+
+func openDatabase(cfg *config.Wrapper) *bolt.DB {
+	databasePath := path.Join(path.Dir(cfg.ConfigPath()), "boltdb")
+	database, _ := bolt.Open(databasePath, 0600, nil) // TODO check error
+	return database
 }
 
 func startDiscovery() *discover.CachingMux {
