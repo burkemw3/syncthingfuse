@@ -95,6 +95,26 @@ func (m *Model) IsPaused(deviceID protocol.DeviceID) bool {
 	return false
 }
 
+func (m *Model) GetFolders() []string {
+	m.fmut.RLock()
+	folders := make([]string, 0, len(m.devicesByFile))
+	for k := range m.devicesByFile {
+		folders = append(folders, k)
+	}
+	m.fmut.RUnlock()
+	return folders
+}
+
+func (m *Model) HasFolder(folder string) bool {
+	result := false
+	m.fmut.RLock()
+	if _, ok := m.devicesByFile[folder]; ok {
+		result = true
+	}
+	m.fmut.RUnlock()
+	return result
+}
+
 func (m *Model) GetEntry(folder string, path string) protocol.FileInfo {
 	m.fmut.RLock()
 

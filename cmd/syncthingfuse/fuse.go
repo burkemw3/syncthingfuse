@@ -49,15 +49,15 @@ func MountFuse(mountpoint string, m *model.Model) {
 
 	select {
 	case err := <-doneServe:
-		l.Infoln("conn.Serve returned %v", err)
+		l.Infoln("conn.Serve returned", err)
 
 		// check if the mount process has an error to report
 		<-c.Ready
 		if err := c.MountError; err != nil {
-			l.Warnln("conn.MountError: %v", err)
+			l.Warnln("conn.MountError:", err)
 		}
 	case sig := <-sigc:
-		l.Infoln("Signal %s received, shutting down.", sig)
+		l.Infoln("Signal", sig, "received, shutting down.")
 	}
 
 	time.AfterFunc(3*time.Second, func() {
@@ -65,13 +65,16 @@ func MountFuse(mountpoint string, m *model.Model) {
 	})
 	l.Infoln("Unmounting...")
 	err = Unmount(mountpoint)
-	l.Infoln("Unmount = %v", err)
+	if err == nil {
+		l.Infoln("Unmounted")
+	} else {
+		l.Infoln("Unmount failed:", err)
+	}
 
 	l.Infoln("syncthing FUSE process ending.")
 }
 
 var (
-	folder    = "syncthingfusetest"
 	debugFuse = strings.Contains(os.Getenv("STTRACE"), "fuse") || os.Getenv("STTRACE") == "all"
 )
 
@@ -83,20 +86,65 @@ func (fs FS) Root() (fs.Node, error) {
 	if debugFuse {
 		l.Debugln("Root")
 	}
-	return Dir{m: fs.m}, nil
+	return STFolder{m: fs.m}, nil
+}
+
+type STFolder struct {
+	m *model.Model
+}
+
+func (stf STFolder) Attr(ctx context.Context, a *fuse.Attr) error {
+	if debugFuse {
+		l.Debugln("stf Attr")
+	}
+	a.Mode = os.ModeDir | 0555
+	return nil
+}
+
+func (stf STFolder) Lookup(ctx context.Context, folderName string) (fs.Node, error) {
+	if debugFuse {
+		l.Debugln("STF Lookup folder", folderName)
+	}
+
+	if stf.m.HasFolder(folderName) {
+		return Dir{
+			folder: folderName,
+			m:      stf.m,
+		}, nil
+	}
+
+	return Dir{}, fuse.ENOENT
+}
+
+func (stf STFolder) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
+	if debugFuse {
+		l.Debugln("ReadDirAll stf")
+	}
+
+	entries := stf.m.GetFolders()
+	result := make([]fuse.Dirent, len(entries))
+	for i, entry := range entries {
+		result[i] = fuse.Dirent{
+			Name: entry,
+			Type: fuse.DT_Dir,
+		}
+	}
+
+	return result, nil
 }
 
 // Dir implements both Node and Handle for the root directory.
 type Dir struct {
-	path string
-	m    *model.Model
+	path   string
+	folder string
+	m      *model.Model
 }
 
 func (d Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	if debugFuse {
-		l.Debugln("Dir Attr")
+		l.Debugln("Dir Attr folder", d.folder, "path", d.path)
 	}
-	entry := d.m.GetEntry(folder, d.path)
+	entry := d.m.GetEntry(d.folder, d.path)
 	a.Mode = os.ModeDir | 0555
 	a.Mtime = time.Unix(entry.Modified, 0)
 	return nil
@@ -104,20 +152,22 @@ func (d Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 
 func (d Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	if debugFuse {
-		l.Debugln("Dir %s Lookup for %s", d.path, name)
+		l.Debugln("Dir Lookup folder", d.folder, "path", d.path, "for", name)
 	}
-	entry := d.m.GetEntry(folder, filepath.Join(d.path, name))
+	entry := d.m.GetEntry(d.folder, filepath.Join(d.path, name))
 
 	var node fs.Node
 	if entry.IsDirectory() {
 		node = Dir{
-			path: entry.Name,
-			m:    d.m,
+			path:   entry.Name,
+			folder: d.folder,
+			m:      d.m,
 		}
 	} else {
 		node = File{
-			path: entry.Name,
-			m:    d.m,
+			path:   entry.Name,
+			folder: d.folder,
+			m:      d.m,
 		}
 	}
 
@@ -126,12 +176,12 @@ func (d Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 
 func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	if debugFuse {
-		l.Debugln("ReadDirAll %s", d.path)
+		l.Debugln("ReadDirAll", d.path)
 	}
 
 	p := path.Clean(d.path)
 
-	entries := d.m.GetChildren(folder, p)
+	entries := d.m.GetChildren(d.folder, p)
 	result := make([]fuse.Dirent, len(entries))
 	for i, entry := range entries {
 		eType := fuse.DT_File
@@ -149,12 +199,13 @@ func (d Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 
 // File implements both Node and Handle for the hello file.
 type File struct {
-	path string
-	m    *model.Model
+	path   string
+	folder string
+	m      *model.Model
 }
 
 func (f File) Attr(ctx context.Context, a *fuse.Attr) error {
-	entry := f.m.GetEntry(folder, f.path)
+	entry := f.m.GetEntry(f.folder, f.path)
 
 	a.Mode = 0444
 	a.Mtime = time.Unix(entry.Modified, 0)
@@ -163,7 +214,7 @@ func (f File) Attr(ctx context.Context, a *fuse.Attr) error {
 }
 
 func (f File) ReadAll(ctx context.Context) ([]byte, error) {
-	data, err := f.m.GetFileData(folder, f.path)
+	data, err := f.m.GetFileData(f.folder, f.path)
 
 	return data, err
 }

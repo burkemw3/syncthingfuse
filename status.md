@@ -9,7 +9,6 @@ TODO
 ----
 
 - FUSE
-  - support Syncthing Folders
   - read file blocks, not ReadAll (https://godoc.org/bazil.org/fuse/fs#HandleReadAller)
   - should probably prevent spotlight indexing with metadata_never_index. (spotlight might not work anyway https://github.com/osxfuse/osxfuse/wiki/FAQ#46-can-i-enable-spotlight-on-a-fuse-for-os-x-file-system)
   - support symlinks
