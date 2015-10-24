@@ -8,17 +8,18 @@ Filled with lots of crappy code, for now :(
 TODO
 ----
 
+- Figure out releasing, installing, configuring, updating, etc
+- manage configuration (web GUI?)
+- handle versions vector (https://forum.syncthing.net/t/wrong-icon-out-of-sync/5935/4)
+- Pull blocks in parallel (consider using syncthing pullers?)
+- FUSE: read file blocks, not ReadAll (https://godoc.org/bazil.org/fuse/fs#HandleReadAller)
 - FUSE
-  - read file blocks, not ReadAll (https://godoc.org/bazil.org/fuse/fs#HandleReadAller)
   - should probably prevent spotlight indexing with metadata_never_index. (spotlight might not work anyway https://github.com/osxfuse/osxfuse/wiki/FAQ#46-can-i-enable-spotlight-on-a-fuse-for-os-x-file-system)
   - support symlinks
   - would be nice to allow some files to be indexed. maybe we can detect the spotlight process and index conditionally
   - show status information in special FUSE files
+- track cache statistics
 - switch to LRU-2Q file cache
-- Figure out releasing, installing, configuring, updating, etc
-- Pull blocks in parallel (consider using syncthing pullers?)
-- CLI
-  - manage configuration
 - Pin files for offline
 - Support writes.
 - manage Unified Buffer Cache
