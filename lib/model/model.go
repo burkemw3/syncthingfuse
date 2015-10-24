@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	"github.com/boltdb/bolt"
+	"github.com/burkemw3/syncthing-fuse/lib/config"
 	"github.com/burkemw3/syncthing-fuse/lib/fileblockcache"
 	"github.com/burkemw3/syncthing-fuse/lib/filetreecache"
-	"github.com/syncthing/syncthing/lib/config"
 	stmodel "github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/sync"
@@ -45,8 +45,11 @@ func NewModel(cfg *config.Wrapper, db *bolt.DB) *Model {
 	for _, folderCfg := range m.cfg.Folders() {
 		folder := folderCfg.ID
 
-		cacheSize := int32(1024 * 1024 * 512) // 500 MB for now. TODO configure
-		m.blockCaches[folder] = fileblockcache.NewFileBlockCache(m.cfg, db, folder, cacheSize)
+		fbc, err := fileblockcache.NewFileBlockCache(m.cfg, db, folderCfg)
+		if err != nil {
+			l.Warnln("Skipping folder", folder, "because fileblockcache init failed:", err)
+		}
+		m.blockCaches[folder] = fbc
 		m.treeCaches[folder] = filetreecache.NewFileTreeCache(m.cfg, db, folder)
 
 		m.devicesByFile[folder] = make(map[string][]protocol.DeviceID)

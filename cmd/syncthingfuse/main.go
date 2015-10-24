@@ -9,9 +9,9 @@ import (
 	"path"
 
 	"github.com/boltdb/bolt"
+	"github.com/burkemw3/syncthing-fuse/lib/config"
 	"github.com/burkemw3/syncthing-fuse/lib/model"
 	"github.com/calmh/logger"
-	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/connections"
 	"github.com/syncthing/syncthing/lib/discover"
 	"github.com/syncthing/syncthing/lib/osutil"
@@ -42,9 +42,7 @@ var l = logger.DefaultLogger
 
 // Command line and environment options
 var (
-	showVersion    bool
-	addDeviceId    string
-	fuseMountPoint string
+	showVersion bool
 )
 
 const (
@@ -59,8 +57,6 @@ The default configuration directory is:
 
 func main() {
 	flag.BoolVar(&showVersion, "version", false, "Show version")
-	flag.StringVar(&addDeviceId, "add-device", "", "Add a new device to the configuration, and exit (requires restart)")
-	flag.StringVar(&fuseMountPoint, "fuse-mount-point", "", "Place to mount FUSE")
 
 	flag.Usage = usageFor(flag.CommandLine, usage, fmt.Sprintf(extraUsage, baseDirs["config"]))
 	flag.Parse()
@@ -92,16 +88,18 @@ func main() {
 
 	cfg := getConfiguration()
 
-	if addDeviceId != "" {
-		deviceId, _ := protocol.DeviceIDFromString(addDeviceId)
-		upsertNewDeviceToConfiguration(cfg, deviceId)
-		l.Infoln("Upserted ", addDeviceId, " to configuration for connection")
-		return
-	}
-
-	if fuseMountPoint == "" {
-		fmt.Println("fuse-mount-point is required")
-		os.Exit(1)
+	if info, err := os.Stat(cfg.Raw().MountPoint); err == nil {
+		if !info.Mode().IsDir() {
+			l.Fatalln("Mount point (", cfg.Raw().MountPoint, ") must be a directory, but isn't")
+			os.Exit(1)
+		}
+	} else {
+		l.Infoln("Mount point (", cfg.Raw().MountPoint, ") does not exist, creating it")
+		err = os.MkdirAll(cfg.Raw().MountPoint, 0700)
+		if err != nil {
+			l.Fatalln("Error creating mount point", cfg.Raw().MountPoint, err)
+			os.Exit(1)
+		}
 	}
 
 	mainSvc := suture.New("main", suture.Spec{
@@ -120,12 +118,12 @@ func main() {
 
 	lans, _ := osutil.GetLans()
 
-	connectionSvc := connections.NewConnectionSvc(cfg, myID, m, tlsCfg, cachedDiscovery, nil /* TODO relaySvc */, bepProtocolName, tlsDefaultCommonName, lans)
+	connectionSvc := connections.NewConnectionSvc(cfg.AsStCfg(myID), myID, m, tlsCfg, cachedDiscovery, nil /* TODO relaySvc */, bepProtocolName, tlsDefaultCommonName, lans)
 	mainSvc.Add(connectionSvc)
 
 	l.Infoln("Started ...")
 
-	MountFuse(fuseMountPoint, m) // TODO handle fight between FUSE and Syncthing Service
+	MountFuse(cfg.Raw().MountPoint, m) // TODO handle fight between FUSE and Syncthing Service
 
 	mainSvc.Stop()
 	l.Okln("Exiting")

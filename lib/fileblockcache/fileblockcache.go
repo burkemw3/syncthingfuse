@@ -9,7 +9,7 @@ import (
 	"path"
 
 	"github.com/boltdb/bolt"
-	"github.com/syncthing/syncthing/lib/config"
+	"github.com/burkemw3/syncthing-fuse/lib/config"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
 
@@ -34,24 +34,31 @@ type fileCacheEntry struct {
 	Size     int32
 }
 
-func NewFileBlockCache(cfg *config.Wrapper, db *bolt.DB, folder string, maximumCacheBytes int32) *FileBlockCache {
+func NewFileBlockCache(cfg *config.Wrapper, db *bolt.DB, fldrCfg config.FolderConfiguration) (*FileBlockCache, error) {
 	d := &FileBlockCache{
-		cfg:                cfg,
-		db:                 db,
-		folder:             folder,
-		folderBucketKey:    []byte(folder),
-		maximumBytesStored: maximumCacheBytes,
+		cfg:             cfg,
+		db:              db,
+		folder:          fldrCfg.ID,
+		folderBucketKey: []byte(fldrCfg.ID),
 	}
+
+	cfgBytes, err := fldrCfg.GetCacheSizeBytes()
+	if err != nil {
+		l.Warnln("Cannot parse cache size (", fldrCfg.CacheSize, ") for folder", fldrCfg.ID)
+		return nil, err
+	}
+	d.maximumBytesStored = cfgBytes
+	l.Infoln("Folder", d.folder, "with cache", d.maximumBytesStored, "bytes")
 
 	d.db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucketIfNotExists(d.folderBucketKey)
 		if err != nil {
-			l.Warnln("error creating bucket for folder", folder, err)
+			l.Warnln("error creating bucket for folder", d.folder, err)
 			return err
 		}
 		cfb, err := b.CreateBucketIfNotExists(cachedFilesBucket)
 		if err != nil {
-			l.Warnln("error creating cached files bucket for folder", folder, err)
+			l.Warnln("error creating cached files bucket for folder", d.folder, err)
 			return err
 		}
 		cfb.ForEach(func(k, v []byte) error {
@@ -76,7 +83,7 @@ func NewFileBlockCache(cfg *config.Wrapper, db *bolt.DB, folder string, maximumC
 	diskCacheFolder := path.Join(path.Dir(d.cfg.ConfigPath()), d.folder)
 	os.Mkdir(diskCacheFolder, 0744)
 
-	return d
+	return d, nil
 }
 
 func (d *FileBlockCache) GetCachedBlockData(blockHash []byte) ([]byte, bool) {
@@ -204,7 +211,11 @@ func (d *FileBlockCache) AddCachedFileData(block protocol.BlockInfo, data []byte
 
 		// write block data to disk
 		diskCachePath := getDiskCachePath(d.cfg, d.folder, block.Hash)
-		ioutil.WriteFile(diskCachePath, data, 0644) // TODO error handle
+		err := ioutil.WriteFile(diskCachePath, data, 0644)
+		if err != nil {
+			l.Warnln("Error writing file", diskCachePath, "for folder", d.folder, "for hash", block.Hash, err)
+			return err // TODO error handle
+		}
 
 		d.currentBytesStored += current.Size
 

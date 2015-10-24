@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/boltdb/bolt"
-	"github.com/syncthing/syncthing/lib/config"
+	"github.com/burkemw3/syncthing-fuse/lib/config"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
 
@@ -15,9 +15,10 @@ var (
 	folder = "fileblockcache_test"
 )
 
-func GetSetGet(t *testing.T) {
-	cfg, db := setup(t)
-	fbc := NewFileBlockCache(cfg, db, folder, 1)
+func TestGetSetGet(t *testing.T) {
+	cfg, db, fldrCfg := setup(t, "1b")
+	defer os.RemoveAll(path.Dir(cfg.ConfigPath()))
+	fbc, _ := NewFileBlockCache(cfg, db, fldrCfg)
 
 	hash := []byte("teh hash")
 
@@ -36,9 +37,10 @@ func GetSetGet(t *testing.T) {
 	assertAvailable(t, fbc, hash, expectedData)
 }
 
-func BlockGetsEvicted1(t *testing.T) {
-	cfg, db := setup(t)
-	fbc := NewFileBlockCache(cfg, db, folder, 2)
+func TestBlockGetsEvicted1(t *testing.T) {
+	cfg, db, fldrCfg := setup(t, "2b")
+	defer os.RemoveAll(path.Dir(cfg.ConfigPath()))
+	fbc, _ := NewFileBlockCache(cfg, db, fldrCfg)
 
 	data1 := []byte("data1")
 	block1 := protocol.BlockInfo{
@@ -69,9 +71,46 @@ func BlockGetsEvicted1(t *testing.T) {
 	assertUnavailable(t, fbc, block1.Hash)
 }
 
-func BlockGetsEvicted2(t *testing.T) {
-	cfg, db := setup(t)
-	fbc := NewFileBlockCache(cfg, db, folder, 2)
+func TestBlockGetsEvicted1AfterRestart(t *testing.T) {
+	cfg, db, fldrCfg := setup(t, "2b")
+	defer os.RemoveAll(path.Dir(cfg.ConfigPath()))
+	fbc, _ := NewFileBlockCache(cfg, db, fldrCfg)
+
+	data1 := []byte("data1")
+	block1 := protocol.BlockInfo{
+		Hash: []byte("hash1"),
+		Size: 1,
+	}
+	fbc.AddCachedFileData(block1, data1)
+	assertAvailable(t, fbc, block1.Hash, data1)
+
+	data2 := []byte("data2")
+	block2 := protocol.BlockInfo{
+		Hash: []byte("hash2"),
+		Size: 1,
+	}
+	fbc.AddCachedFileData(block2, data2)
+	assertAvailable(t, fbc, block1.Hash, data1)
+	assertAvailable(t, fbc, block2.Hash, data2)
+
+	fbc, _ = NewFileBlockCache(cfg, db, fldrCfg)
+
+	data3 := []byte("data3")
+	block3 := protocol.BlockInfo{
+		Hash: []byte("hash3"),
+		Size: 1,
+	}
+	fbc.AddCachedFileData(block3, data3)
+
+	assertAvailable(t, fbc, block2.Hash, data2)
+	assertAvailable(t, fbc, block3.Hash, data3)
+	assertUnavailable(t, fbc, block1.Hash)
+}
+
+func TestBlockGetsEvicted2(t *testing.T) {
+	cfg, db, fldrCfg := setup(t, "2b")
+	defer os.RemoveAll(path.Dir(cfg.ConfigPath()))
+	fbc, _ := NewFileBlockCache(cfg, db, fldrCfg)
 
 	data1 := []byte("data1")
 	block1 := protocol.BlockInfo{
@@ -102,9 +141,10 @@ func BlockGetsEvicted2(t *testing.T) {
 	assertAvailable(t, fbc, block3.Hash, data3)
 }
 
-func EvictMultipleBlocks(t *testing.T) {
-	cfg, db := setup(t)
-	fbc := NewFileBlockCache(cfg, db, folder, 2)
+func TestEvictMultipleBlocks(t *testing.T) {
+	cfg, db, fldrCfg := setup(t, "2b")
+	defer os.RemoveAll(path.Dir(cfg.ConfigPath()))
+	fbc, _ := NewFileBlockCache(cfg, db, fldrCfg)
 
 	data1 := []byte("data1")
 	block1 := protocol.BlockInfo{
@@ -157,22 +197,21 @@ func assertUnavailable(t *testing.T, fbc *FileBlockCache, hash []byte) {
 	}
 }
 
-func setup(t *testing.T) (*config.Wrapper, *bolt.DB) {
+func setup(t *testing.T, cacheSize string) (*config.Wrapper, *bolt.DB, config.FolderConfiguration) {
 	dir, _ := ioutil.TempDir("", "stf-mt")
-	defer os.RemoveAll(dir)
 	configFile, _ := ioutil.TempFile(dir, "config")
 	deviceID, _ := protocol.DeviceIDFromString("FFR6LPZ-7K4PTTV-UXQSMUU-CPQ5YWH-OEDFIIQ-JUG777G-2YQXXR5-YD6AWQR")
 	realCfg := config.New(deviceID)
 	cfg := config.Wrap(configFile.Name(), realCfg)
-	t.Logf("config path %s\n", configFile.Name())
 
 	databasePath := path.Join(path.Dir(cfg.ConfigPath()), "boltdb")
 	database, _ := bolt.Open(databasePath, 0600, nil)
 
 	folderCfg := config.FolderConfiguration{
-		ID: folder,
+		ID:        folder,
+		CacheSize: cacheSize,
 	}
 	cfg.SetFolder(folderCfg)
 
-	return cfg, database
+	return cfg, database, folderCfg
 }

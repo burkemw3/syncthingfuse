@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/boltdb/bolt"
-	"github.com/syncthing/syncthing/lib/config"
+	"github.com/burkemw3/syncthing-fuse/lib/config"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
 
@@ -15,20 +15,8 @@ func TestModelSingleIndex(t *testing.T) {
 	// init
 	dir, _ := ioutil.TempDir("", "stf-mt")
 	defer os.RemoveAll(dir)
-	configFile, _ := ioutil.TempFile(dir, "config")
 	deviceID, _ := protocol.DeviceIDFromString("FFR6LPZ-7K4PTTV-UXQSMUU-CPQ5YWH-OEDFIIQ-JUG777G-2YQXXR5-YD6AWQR")
-	realCfg := config.New(deviceID)
-	cfg := config.Wrap(configFile.Name(), realCfg)
-	t.Logf("config path %s\n", configFile.Name())
-
-	databasePath := path.Join(path.Dir(cfg.ConfigPath()), "boltdb")
-	database, _ := bolt.Open(databasePath, 0600, nil)
-
-	folder := "syncthingfusetest"
-	folderCfg := config.FolderConfiguration{
-		ID: folder,
-	}
-	cfg.SetFolder(folderCfg)
+	cfg, database, folder := setup(deviceID, dir)
 
 	// Arrange
 	model := NewModel(cfg, database)
@@ -73,20 +61,8 @@ func TestModelIndexWithRestart(t *testing.T) {
 	// init
 	dir, _ := ioutil.TempDir("", "stf-mt")
 	defer os.RemoveAll(dir)
-	configFile, _ := ioutil.TempFile(dir, "config")
 	deviceID, _ := protocol.DeviceIDFromString("FFR6LPZ-7K4PTTV-UXQSMUU-CPQ5YWH-OEDFIIQ-JUG777G-2YQXXR5-YD6AWQR")
-	realCfg := config.New(deviceID)
-	cfg := config.Wrap(configFile.Name(), realCfg)
-	t.Logf("config path %s\n", configFile.Name())
-
-	databasePath := path.Join(path.Dir(cfg.ConfigPath()), "boltdb")
-	database, _ := bolt.Open(databasePath, 0600, nil)
-
-	folder := "syncthingfusetest"
-	folderCfg := config.FolderConfiguration{
-		ID: folder,
-	}
-	cfg.SetFolder(folderCfg)
+	cfg, database, folder := setup(deviceID, dir)
 
 	// Arrange
 	model := NewModel(cfg, database)
@@ -104,6 +80,7 @@ func TestModelIndexWithRestart(t *testing.T) {
 	model.Index(deviceID, folder, files, flags, options)
 
 	// Act (restart db and model)
+	databasePath := database.Path()
 	database.Close()
 	database, _ = bolt.Open(databasePath, 0600, nil)
 	model = NewModel(cfg, database)
@@ -135,19 +112,8 @@ func TestModelSingleIndexUpdate(t *testing.T) {
 	// init
 	dir, _ := ioutil.TempDir("", "stf-mt")
 	defer os.RemoveAll(dir)
-	configFile, _ := ioutil.TempFile(dir, "config")
 	deviceID, _ := protocol.DeviceIDFromString("FFR6LPZ-7K4PTTV-UXQSMUU-CPQ5YWH-OEDFIIQ-JUG777G-2YQXXR5-YD6AWQR")
-	realCfg := config.New(deviceID)
-	cfg := config.Wrap(configFile.Name(), realCfg)
-
-	databasePath := path.Join(path.Dir(cfg.ConfigPath()), "boltdb")
-	database, _ := bolt.Open(databasePath, 0600, nil)
-
-	folder := "syncthingfusetest"
-	folderCfg := config.FolderConfiguration{
-		ID: folder,
-	}
-	cfg.SetFolder(folderCfg)
+	cfg, database, folder := setup(deviceID, dir)
 
 	// Arrange
 	model := NewModel(cfg, database)
@@ -223,4 +189,22 @@ func assertEntry(t *testing.T, entry protocol.FileInfo, name string, flags uint3
 	}
 
 	t.Error("incorrect entry for file", name)
+}
+
+func setup(deviceID protocol.DeviceID, dir string) (*config.Wrapper, *bolt.DB, string) {
+	configFile, _ := ioutil.TempFile(dir, "config")
+	realCfg := config.New(deviceID)
+	cfg := config.Wrap(configFile.Name(), realCfg)
+
+	databasePath := path.Join(path.Dir(cfg.ConfigPath()), "boltdb")
+	database, _ := bolt.Open(databasePath, 0600, nil)
+
+	folder := "syncthingfusetest"
+	folderCfg := config.FolderConfiguration{
+		ID:        folder,
+		CacheSize: "1MiB",
+	}
+	cfg.SetFolder(folderCfg)
+
+	return cfg, database, folder
 }
