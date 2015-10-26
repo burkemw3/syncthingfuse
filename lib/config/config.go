@@ -20,10 +20,12 @@ const (
 
 type Configuration struct {
 	Version    int                          `xml:"version,attr" json:"version"`
+	MyID       string                       `xml:"-" json:"myID"`
 	MountPoint string                       `xml:"mountPoint" json:"mountPoint"`
 	Folders    []FolderConfiguration        `xml:"folder" json:"folders"`
 	Devices    []config.DeviceConfiguration `xml:"device" json:"devices"`
 	Options    OptionsConfiguration         `xml:"options" json:"options"`
+	GUI        GUIConfiguration             `xml:"gui" json:"gui"`
 	XMLName    xml.Name                     `xml:"configuration" json:"-"`
 }
 
@@ -31,6 +33,11 @@ type FolderConfiguration struct {
 	ID        string                             `xml:"id,attr" json:"id"`
 	Devices   []config.FolderDeviceConfiguration `xml:"device" json:"devices"`
 	CacheSize string                             `xml:"cacheSize" json:"cacheSize" default:"512MiB"`
+}
+
+type GUIConfiguration struct {
+	Enabled    bool   `xml:"enabled,attr" json:"enabled" default:"true"`
+	RawAddress string `xml:"address" json:"address" default:"127.0.0.1:8385"`
 }
 
 func (f FolderConfiguration) GetCacheSizeBytes() (int32, error) {
@@ -48,6 +55,7 @@ func New(myID protocol.DeviceID) Configuration {
 
 	cfg.prepare(myID)
 	setDefaults(&cfg)
+	setDefaults(&cfg.GUI)
 	setDefaults(&cfg.Options)
 
 	usr, _ := user.Current()
@@ -80,6 +88,7 @@ func (cfg *Configuration) WriteXML(w io.Writer) error {
 }
 
 func (cfg *Configuration) prepare(myID protocol.DeviceID) {
+	cfg.MyID = myID.String()
 	fillNilSlices(cfg)
 	fillNilSlices(&(cfg.Options))
 }

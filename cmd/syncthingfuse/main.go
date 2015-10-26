@@ -121,6 +121,14 @@ func main() {
 	connectionSvc := connections.NewConnectionSvc(cfg.AsStCfg(myID), myID, m, tlsCfg, cachedDiscovery, nil /* TODO relaySvc */, bepProtocolName, tlsDefaultCommonName, lans)
 	mainSvc.Add(connectionSvc)
 
+	if cfg.Raw().GUI.Enabled {
+		api, err := newAPISvc(myID, cfg)
+		if err != nil {
+			l.Fatalln("Cannot start GUI:", err)
+		}
+		mainSvc.Add(api)
+	}
+
 	l.Infoln("Started ...")
 
 	MountFuse(cfg.Raw().MountPoint, m) // TODO handle fight between FUSE and Syncthing Service
