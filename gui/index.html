@@ -1,10 +1,8 @@
-<html ng-app="syncthing-fuse">
+<html ng-app="syncthingfuse">
 <head>
     <title>Syncthing FUSE</title>
     <link rel="stylesheet" href="vendor/bootstrap-3.3.5/css/bootstrap.min.css" />
     <link rel="stylesheet" href="vendor/bootstrap-3.3.5/css/bootstrap-theme.min.css" />
-    <script src="vendor/angular-1.4.7/angular.min.js"></script>
-    <script src="js/app.js"></script>
 </head>
 <body ng-controller="SyncthingFuseController">
     <div class="container">
@@ -23,6 +21,14 @@
                                 <td>{{ folder.cacheSize }}</td>
                             </tr>
                         </table>
+                    </div>
+                    <div class="panel-footer">
+                        <span class="pull-right">
+                          <button type="button" class="btn btn-sm btn-default" ng-click="editFolder(folder)">
+                            <span class="glyphicon glyphicon-pencil"></span>&nbsp;Edit
+                          </button>
+                        </span>
+                        <div class="clearfix"></div>
                     </div>
                 </div>
                 <div class="clearfix"></div>
@@ -48,5 +54,20 @@
             </div>
         </div>
     </div>
+
+    <div edit-folder-modal></div>
+
+    <!-- prereqs -->
+    <script src="vendor/angular-1.4.7/angular.min.js"></script>
+    <script src="vendor/jquery-2.1.4.min.js"></script>
+    <script src="vendor/bootstrap-3.3.5/js/bootstrap.min.js"></script>
+    <!-- core module -->
+    <script src="js/core/module.js"></script>
+    <script src="js/core/core.js"></script>
+    <!-- folder module -->
+    <script src="js/folder/module.js"></script>
+    <script src="js/folder/editFolderModalDirective.js"></script>
+    <!-- ng app -->
+    <script src="js/app.js"></script>
 </body>
 </html>

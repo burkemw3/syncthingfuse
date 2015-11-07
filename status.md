@@ -8,11 +8,16 @@ Filled with lots of crappy code, for now :(
 TODO
 ----
 
-- Figure out releasing, installing, configuring, updating, etc
 - manage configuration (web GUI?)
+  - handle errors
+  - manipulate folders
+  - manipulate devices
 - handle versions vector (https://forum.syncthing.net/t/wrong-icon-out-of-sync/5935/4)
 - Pull blocks in parallel (consider using syncthing pullers?)
 - FUSE: read file blocks, not ReadAll (https://godoc.org/bazil.org/fuse/fs#HandleReadAller)
+- fix connections mux
+- Figure out releasing, installing, configuring, updating, etc
+  - base on recent ST Prime code
 - FUSE
   - should probably prevent spotlight indexing with metadata_never_index. (spotlight might not work anyway https://github.com/osxfuse/osxfuse/wiki/FAQ#46-can-i-enable-spotlight-on-a-fuse-for-os-x-file-system)
   - support symlinks

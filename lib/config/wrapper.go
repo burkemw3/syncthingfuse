@@ -3,13 +3,16 @@ package config
 import (
 	"os"
 
+	stconfig "github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/osutil"
 	"github.com/syncthing/syncthing/lib/protocol"
+	"github.com/syncthing/syncthing/lib/sync"
 )
 
 type Wrapper struct {
 	cfg  Configuration
 	path string
+	mut  sync.Mutex
 }
 
 // Wrap wraps an existing Configuration structure and ties it to a file on
@@ -18,6 +21,7 @@ func Wrap(path string, cfg Configuration) *Wrapper {
 	w := &Wrapper{
 		cfg:  cfg,
 		path: path,
+		mut:  sync.NewMutex(),
 	}
 	return w
 }
@@ -51,6 +55,9 @@ func (w *Wrapper) Raw() Configuration {
 // Folders returns a map of folders. Folder structures should not be changed,
 // other than for the purpose of updating via SetFolder().
 func (w *Wrapper) Folders() map[string]FolderConfiguration {
+	w.mut.Lock()
+	defer w.mut.Unlock()
+
 	folderMap := make(map[string]FolderConfiguration, len(w.cfg.Folders))
 	for _, fld := range w.cfg.Folders {
 		folderMap[fld.ID] = fld
@@ -59,6 +66,9 @@ func (w *Wrapper) Folders() map[string]FolderConfiguration {
 }
 
 func (w *Wrapper) SetFolder(fldCfg FolderConfiguration) {
+	w.mut.Lock()
+	defer w.mut.Unlock()
+
 	replaced := false
 	for i := range w.cfg.Folders {
 		if w.cfg.Folders[i].ID == fldCfg.ID {
@@ -69,6 +79,27 @@ func (w *Wrapper) SetFolder(fldCfg FolderConfiguration) {
 	}
 	if !replaced {
 		w.cfg.Folders = append(w.cfg.Folders, fldCfg)
+	}
+}
+
+func (w *Wrapper) Replace(to Configuration) stconfig.CommitResponse {
+	w.mut.Lock()
+	defer w.mut.Unlock()
+
+	// validate
+	for _, fldrCfg := range to.Folders {
+		if _, err := fldrCfg.GetCacheSizeBytes(); err != nil {
+			l.Debugln("rejected config, cannot parse cache size:", err)
+			return stconfig.CommitResponse{
+				ValidationError: err,
+			}
+		}
+	}
+
+	// set
+	w.cfg = to
+	return stconfig.CommitResponse{
+		RequiresRestart: true,
 	}
 }
 

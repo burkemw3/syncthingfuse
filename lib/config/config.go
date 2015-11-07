@@ -53,10 +53,12 @@ func New(myID protocol.DeviceID) Configuration {
 	var cfg Configuration
 	cfg.Version = CurrentVersion
 
-	cfg.prepare(myID)
+	cfg.MyID = myID.String()
 	setDefaults(&cfg)
 	setDefaults(&cfg.GUI)
 	setDefaults(&cfg.Options)
+
+	cfg.prepare()
 
 	usr, _ := user.Current()
 	cfg.MountPoint = path.Join(usr.HomeDir, "SyncthingFUSE")
@@ -67,11 +69,14 @@ func New(myID protocol.DeviceID) Configuration {
 func ReadXML(r io.Reader, myID protocol.DeviceID) (Configuration, error) {
 	var cfg Configuration
 
-	cfg.prepare(myID)
+	cfg.MyID = myID.String()
 	setDefaults(&cfg)
+	setDefaults(&cfg.GUI)
 	setDefaults(&cfg.Options)
 
 	err := xml.NewDecoder(r).Decode(&cfg)
+
+	cfg.prepare()
 
 	return cfg, err
 }
@@ -87,8 +92,7 @@ func (cfg *Configuration) WriteXML(w io.Writer) error {
 	return err
 }
 
-func (cfg *Configuration) prepare(myID protocol.DeviceID) {
-	cfg.MyID = myID.String()
+func (cfg *Configuration) prepare() {
 	fillNilSlices(cfg)
 	fillNilSlices(&(cfg.Options))
 }
