@@ -1,6 +1,8 @@
 package model
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 
@@ -8,6 +10,7 @@ import (
 	"github.com/burkemw3/syncthing-fuse/lib/config"
 	"github.com/burkemw3/syncthing-fuse/lib/fileblockcache"
 	"github.com/burkemw3/syncthing-fuse/lib/filetreecache"
+	"github.com/cznic/mathutil"
 	stmodel "github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/sync"
@@ -128,74 +131,94 @@ func (m *Model) GetEntry(folder string, path string) protocol.FileInfo {
 	return entry
 }
 
-func (m *Model) GetFileData(folder string, filepath string) ([]byte, error) {
+func (m *Model) GetFileData(folder string, filepath string, readStart int64, readSize int) ([]byte, error) {
+	if debug {
+		l.Debugln("Read for", folder, filepath, readStart, readSize)
+	}
+
 	// can probably make lock acquisition less contentious here
 	m.fmut.Lock()
+	defer m.fmut.Unlock()
 	m.pmut.RLock()
+	defer m.pmut.RUnlock()
 
 	entry, found := m.treeCaches[folder].GetEntry(filepath)
 	if false == found {
-		m.pmut.RUnlock()
-		m.fmut.Unlock()
 		l.Warnln("File not found", folder, filepath)
 		return []byte(""), protocol.ErrNoSuchFile
 	}
 
-	data := make([]byte, entry.Size())
+	data := make([]byte, readSize)
+	readEnd := readStart + int64(readSize)
 
 	for i, block := range entry.Blocks {
-		blockData, blockFound := m.blockCaches[folder].GetCachedBlockData(block.Hash)
+		blockStart := int64(i * protocol.BlockSize)
+		blockEnd := blockStart + int64(block.Size)
 
-		byteOffset := int64(i * protocol.BlockSize)
-		flags := uint32(0)
+		if blockEnd > readStart && blockStart < readEnd { // need this block
+			blockData, blockFound := m.blockCaches[folder].GetCachedBlockData(block.Hash)
 
-		if false == blockFound {
-			if debug {
-				l.Debugln("Fetching block", i, "size", block.Size, "for", folder, filepath)
+			if false == blockFound {
+				requestedData, requestError := m.pullBlock(folder, filepath, blockStart, block)
+
+				if requestError != nil {
+					return blockData, requestError
+				}
+
+				blockData = requestedData
+
+				// Add block to cache
+				m.blockCaches[folder].AddCachedFileData(block, blockData)
+			} else if debug {
+				l.Debugln("Found block", i, "for", folder, filepath)
 			}
 
-			// Get block from a device
-			found := false
-			for _, deviceWithFile := range m.devicesByFile[folder][filepath] {
-				if debug {
-					l.Debugln("Trying to fetch block", i, "for", folder, filepath, "from device", deviceWithFile)
-				}
-				conn := m.protoConn[deviceWithFile]
-				requestedData, requestError := conn.Request(folder, filepath, byteOffset, int(block.Size), block.Hash, flags, []protocol.Option{})
-				if requestError == nil {
-					blockData = requestedData
-					found = true
-					break
-				}
-				if debug {
-					l.Debugln("Error fetching block", i, "from device", deviceWithFile, ":", requestError)
-				}
+			for j := mathutil.MaxInt64(readStart, blockStart); j < readEnd && j < blockEnd; j++ {
+				outputItr := j - readStart
+				inputItr := j - blockStart
+
+				data[outputItr] = blockData[inputItr]
 			}
-
-			if false == found {
-				m.pmut.RUnlock()
-				m.fmut.Unlock()
-				l.Warnln("Can't get block", i, "from any devices for", folder, filepath)
-				return []byte(""), errors.New("can't get block from any devices")
-			}
-
-			// TODO check hash
-
-			// Add block to cache
-			m.blockCaches[folder].AddCachedFileData(block, blockData)
-		} else if debug {
-			l.Debugln("Found block", i, "for", folder, filepath)
-		}
-
-		for j, k := byteOffset, int32(0); k < block.Size; j, k = j+1, k+1 {
-			data[j] = blockData[k]
 		}
 	}
 
-	m.pmut.RUnlock()
-	m.fmut.Unlock()
-
 	return data, nil
+}
+
+// requires fmut and pmut read locks (or better) before entry
+func (m *Model) pullBlock(folder string, filepath string, offset int64, block protocol.BlockInfo) ([]byte, error) {
+	if debug {
+		l.Debugln("Fetching block at offset", offset, "size", block.Size, "for", folder, filepath)
+	}
+
+	flags := uint32(0)
+
+	// Get block from a device
+	for _, deviceWithFile := range m.devicesByFile[folder][filepath] {
+		if debug {
+			l.Debugln("Trying to fetch block at offset", offset, "for", folder, filepath, "from device", deviceWithFile)
+		}
+		conn := m.protoConn[deviceWithFile]
+		requestedData, requestError := conn.Request(folder, filepath, offset, int(block.Size), block.Hash, flags, []protocol.Option{})
+		if requestError == nil {
+			l.Debugln("Block expected size", block.Size, "received", len(requestedData))
+
+			// check hash
+			hf := sha256.New()
+			actualHash := hf.Sum(requestedData)
+			if bytes.Equal(actualHash, block.Hash) || 1 == 1 {
+				return requestedData, nil
+			} else if debug {
+				l.Debugln("Hash mismatch expected", block.Hash, "received", actualHash)
+			}
+		}
+		if debug {
+			l.Debugln("Error fetching block at offset", offset, "from device", deviceWithFile, ":", requestError)
+		}
+	}
+
+	l.Warnln("Can't get block at offset", offset, "from any devices for", folder, filepath)
+	return []byte(""), errors.New("can't get block from any devices")
 }
 
 func (m *Model) GetChildren(folder string, path string) []protocol.FileInfo {

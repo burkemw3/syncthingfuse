@@ -12,7 +12,6 @@ TODO
   - handle errors
 - handle versions vector (https://forum.syncthing.net/t/wrong-icon-out-of-sync/5935/4)
 - Pull blocks in parallel (consider using syncthing pullers?)
-- FUSE: read file blocks, not ReadAll (https://godoc.org/bazil.org/fuse/fs#HandleReadAller)
 - fix connections mux
 - obey folder device configuration
 - obey decrease in cache size on restart

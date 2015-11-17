@@ -213,10 +213,16 @@ func (f File) Attr(ctx context.Context, a *fuse.Attr) error {
 	return nil
 }
 
-func (f File) ReadAll(ctx context.Context) ([]byte, error) {
-	data, err := f.m.GetFileData(f.folder, f.path)
+func (f File) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
+	data, err := f.m.GetFileData(f.folder, f.path, req.Offset, req.Size)
 
-	return data, err
+	if err != nil {
+		return err
+	}
+
+	resp.Data = data
+
+	return err
 }
 
 // Unmount attempts to unmount the provided FUSE mount point, forcibly
