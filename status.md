@@ -17,6 +17,7 @@ TODO
 - obey folder device configuration
 - obey decrease in cache size on restart
 - Figure out releasing, installing, configuring, updating, etc
+  - test on linux
   - base on recent ST Prime code
 - show connection status in gui
 - undo actions in UI

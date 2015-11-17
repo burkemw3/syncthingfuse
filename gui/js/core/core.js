@@ -77,7 +77,7 @@ angular.module('syncthingfuse.core').controller('SyncthingFuseController', funct
     };
 
     $scope.editDevice = function(device) {
-        $scope.currentDevice = device
+        $scope.currentDevice = angular.copy(device);
         $scope.editingExisting = true;
         $scope.currentDevice._addressesStr = device.addresses.join(', ');
 
@@ -100,7 +100,11 @@ angular.module('syncthingfuse.core').controller('SyncthingFuseController', funct
 
         var deviceCfg = $scope.currentDevice;
 
-        if (false === $scope.editingExisting) {
+        if ($scope.editingExisting) {
+            // replace existing device
+            var i = $scope.config.devices.findIndex(function(el) { return el.deviceID === deviceCfg.deviceID });
+            $scope.config.devices[i] = deviceCfg;
+        } else {
             // add to devices
             $scope.config.devices.push(deviceCfg);
             $scope.config.devices.sort(function(a, b) {
@@ -117,15 +121,15 @@ angular.module('syncthingfuse.core').controller('SyncthingFuseController', funct
         for (var i=0 ; i<$scope.config.folders.length ; i++) {
             var folder = $scope.config.folders[i];
 
-            var j = folder.devices.findIndex(function(el) { return el.deviceID === deviceCfg.deviceID })
+            var j = folder.devices.findIndex(function(el) { return el.deviceID === deviceCfg.deviceID });
 
             if (j === -1 && deviceCfg.selectedFolders[folder.id]) {
                 // device doesn't exist for folder, but should
-                folder.devices.push({deviceID: deviceCfg.deviceID})
+                folder.devices.push({deviceID: deviceCfg.deviceID});
             }
             if (j !== -1 && false === deviceCfg.selectedFolders[folder.id]) {
                 // device exists for folder, but shouldn't
-                folder.devices.splice(j, 1)
+                folder.devices.splice(j, 1);
             }
         }
 
@@ -153,6 +157,27 @@ angular.module('syncthingfuse.core').controller('SyncthingFuseController', funct
 
         $scope.saveConfig();
     };
+
+    $scope.editSettings = function() {
+        $scope.currentDevice = angular.copy($scope.thisDevice());
+        $scope.currentDevice.mountPoint = $scope.config.mountPoint;
+        $scope.currentDevice.listenAddressesStr = $scope.config.options.listenAddress.join(', ');
+
+        $scope.settingsEditor.$setPristine();
+        $('#editSettings').modal();
+    };
+
+    $scope.saveSettings = function() {
+        $('#editSettings').modal('hide');
+
+        $scope.thisDevice().name = $scope.currentDevice.name;
+        $scope.config.mountPoint = $scope.currentDevice.mountPoint;
+        $scope.config.options.listenAddress = $scope.currentDevice.listenAddressesStr.split(',').map(function (x) {
+            return x.trim();
+        });
+
+        $scope.saveConfig();
+    }
 
     $scope.addFolder = function() {
         $scope.currentFolder = {

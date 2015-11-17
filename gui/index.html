@@ -7,7 +7,7 @@
 <body ng-controller="SyncthingFuseController">
     <div class="container">
         <div class="row">
-            <h1>Syncthing FUSE</h1>
+            <h3>Syncthing FUSE</h3>
         </div>
         <div class="row">
             <div class="col-md-6">
@@ -46,7 +46,7 @@
                 <div class="clearfix"></div>
             </div>
             <div class="col-md-6">
-                <h3>Devices</h3>
+                <h3>This Device</h3>
                 <div class="panel panel-default" ng-repeat="deviceCfg in [thisDevice()]">
                     <div class="panel-heading"><h3 class="panel-title"><span class="glyphicon glyphicon-hdd"></span> {{ deviceCfg.name }}</h3></div>
                     <div class="panel-body">
@@ -57,7 +57,16 @@
                             </tr>
                         </table>
                     </div>
+                    <div class="panel-footer">
+                        <span class="pull-right">
+                            <button type="button" class="btn btn-sm btn-default" ng-click="editSettings()">
+                                <span class="glyphicon glyphicon-pencil"></span>&nbsp;Edit Settings
+                            </button>
+                        </span>
+                        <div class="clearfix"></div>
+                    </div>
                 </div>
+                <h3>Devices</h3>
                 <div class="panel panel-default" ng-repeat="device in otherDevices()">
                     <div class="panel-heading"><h3 class="panel-title"><span class="glyphicon glyphicon-cloud"></span> {{ device.name }}</h3></div>
                     <div class="panel-body">
@@ -91,6 +100,7 @@
 
     <div edit-folder-modal></div>
     <div edit-device-modal></div>
+    <div edit-settings-modal></div>
 
     <!-- prereqs -->
     <script src="vendor/angular-1.4.7/angular.min.js"></script>
@@ -102,6 +112,7 @@
     <!-- device module -->
     <script src="js/device/module.js"></script>
     <script src="js/device/editDeviceModalDirective.js"></script>
+    <script src="js/device/editSettingsModalDirective.js"></script>
     <!-- folder module -->
     <script src="js/folder/module.js"></script>
     <script src="js/folder/editFolderModalDirective.js"></script>

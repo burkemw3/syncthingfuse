@@ -1,0 +1,48 @@
+<div id="editSettings" class="modal fade" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title">
+                    <span class="glyphicon glyphicon-pencil"></span><span>Edit Settings</span>
+                    </h4>
+                </div>
+                <div class="modal-body">
+                    <form role="form" name="settingsEditor">
+                        <div class="form-group">
+                            <label for="deviceID">Device ID</label>
+                            <div class="well well-sm text-monospace" select-on-click>{{ config.myID }}</div>
+                            <p class="help-block">This device's identifier</p>
+                        </div>
+                        <div class="form-group">
+                            <label for="name">Device Name</label>
+                            <input id="name" class="form-control" type="text" ng-model="currentDevice.name"></input>
+                            <p class="help-block">
+                                <span ng-if="currentDevice.name.length === 0">Peers will see the device based on the ID</span>
+                                <span ng-if="currentDevice.name.length > 0">Advertised to peers as the name of this device</span>
+                            </p>
+                        </div>
+                        <div class="form-group">
+                            <label for="name">Mount Point</label>
+                            <input id="name" class="form-control" type="text" ng-model="currentDevice.mountPoint"></input>
+                            <p class="help-block">The location shared folders will be found. If the location does not exist, it will be created. The location cannot be an existing file (but can be an existing directory).
+                            </p>
+                        </div>
+                        <div class="form-group">
+                            <label for="name">Listen Addresses</label>
+                            <input id="name" class="form-control" type="text" ng-model="currentDevice.listenAddressesStr"></input>
+                            <p class="help-block">Enter comma separated ("tcp://ip:port") addresses to listen on.</p>
+                        </div>
+                    </form>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-primary btn-sm" ng-click="saveSettings()" ng-disabled="settingsEditor.$invalid">
+                            <span class="glyphicon glyphicon-check"></span>&nbsp;<span>Save</span>
+                        </button>
+                        <button type="button" class="btn btn-default btn-sm" data-dismiss="modal">
+                            <span class="glyphicon glyphicon-times"></span>&nbsp;<span>Close</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

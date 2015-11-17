@@ -37,7 +37,7 @@ type FolderConfiguration struct {
 
 type GUIConfiguration struct {
 	Enabled    bool   `xml:"enabled,attr" json:"enabled" default:"true"`
-	RawAddress string `xml:"address" json:"address" default:"127.0.0.1:8385"`
+	RawAddress string `xml:"address" json:"address" default:"127.0.0.1:5833"`
 }
 
 func (f FolderConfiguration) GetCacheSizeBytes() (int32, error) {
