@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"math/rand"
 
 	"github.com/boltdb/bolt"
 	"github.com/burkemw3/syncthing-fuse/lib/config"
@@ -151,38 +152,60 @@ func (m *Model) GetFileData(folder string, filepath string, readStart int64, rea
 	data := make([]byte, readSize)
 	readEnd := readStart + int64(readSize)
 
+	blocksExpected := 0
+	messages := make(chan bool)
+
+	// create workers for pulling
 	for i, block := range entry.Blocks {
 		blockStart := int64(i * protocol.BlockSize)
 		blockEnd := blockStart + int64(block.Size)
 
 		if blockEnd > readStart && blockStart < readEnd { // need this block
-			blockData, blockFound := m.blockCaches[folder].GetCachedBlockData(block.Hash)
+			blocksExpected++
+			go m.copyBlockToData(folder, filepath, readStart, readEnd, blockStart, blockEnd, block, data, messages)
+		}
+	}
 
-			if false == blockFound {
-				requestedData, requestError := m.pullBlock(folder, filepath, blockStart, block)
-
-				if requestError != nil {
-					return blockData, requestError
-				}
-
-				blockData = requestedData
-
-				// Add block to cache
-				m.blockCaches[folder].AddCachedFileData(block, blockData)
-			} else if debug {
-				l.Debugln("Found block", i, "for", folder, filepath)
-			}
-
-			for j := mathutil.MaxInt64(readStart, blockStart); j < readEnd && j < blockEnd; j++ {
-				outputItr := j - readStart
-				inputItr := j - blockStart
-
-				data[outputItr] = blockData[inputItr]
-			}
+	// wait for workers to finish
+	for i := 0; i < blocksExpected; i++ {
+		result := <-messages
+		if !result {
+			return []byte(""), errors.New("a required block was not successfully retrieved")
 		}
 	}
 
 	return data, nil
+}
+
+// requires fmut and pmut read locks (or better) before entry
+func (m *Model) copyBlockToData(folder string, filepath string, readStart int64, readEnd int64, blockStart int64, blockEnd int64, block protocol.BlockInfo, data []byte, messages chan bool) { // TODO add channel
+	blockData, blockFound := m.blockCaches[folder].GetCachedBlockData(block.Hash)
+
+	if false == blockFound {
+		requestedData, requestError := m.pullBlock(folder, filepath, blockStart, block)
+
+		if requestError != nil {
+			l.Warnln("Can't get block at offset", blockStart, "from any devices for", folder, filepath, requestError)
+			messages <- false
+			return
+		}
+
+		blockData = requestedData
+
+		// Add block to cache
+		m.blockCaches[folder].AddCachedFileData(block, blockData)
+	} else if debug {
+		l.Debugln("Found block at offset", blockStart, "for", folder, filepath)
+	}
+
+	for j := mathutil.MaxInt64(readStart, blockStart); j < readEnd && j < blockEnd; j++ {
+		outputItr := j - readStart
+		inputItr := j - blockStart
+
+		data[outputItr] = blockData[inputItr]
+	}
+
+	messages <- true
 }
 
 // requires fmut and pmut read locks (or better) before entry
@@ -194,7 +217,9 @@ func (m *Model) pullBlock(folder string, filepath string, offset int64, block pr
 	flags := uint32(0)
 
 	// Get block from a device
-	for _, deviceWithFile := range m.devicesByFile[folder][filepath] {
+	devices := m.devicesByFile[folder][filepath]
+	for _, deviceIndex := range rand.Perm(len(devices)) {
+		deviceWithFile := devices[deviceIndex]
 		if debug {
 			l.Debugln("Trying to fetch block at offset", offset, "for", folder, filepath, "from device", deviceWithFile)
 		}
@@ -204,9 +229,8 @@ func (m *Model) pullBlock(folder string, filepath string, offset int64, block pr
 			l.Debugln("Block expected size", block.Size, "received", len(requestedData))
 
 			// check hash
-			hf := sha256.New()
-			actualHash := hf.Sum(requestedData)
-			if bytes.Equal(actualHash, block.Hash) || 1 == 1 {
+			actualHash := sha256.Sum256(requestedData)
+			if bytes.Equal(actualHash[:], block.Hash) {
 				return requestedData, nil
 			} else if debug {
 				l.Debugln("Hash mismatch expected", block.Hash, "received", actualHash)
@@ -217,7 +241,6 @@ func (m *Model) pullBlock(folder string, filepath string, offset int64, block pr
 		}
 	}
 
-	l.Warnln("Can't get block at offset", offset, "from any devices for", folder, filepath)
 	return []byte(""), errors.New("can't get block from any devices")
 }
 

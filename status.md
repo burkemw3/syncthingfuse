@@ -10,8 +10,6 @@ TODO
 
 - manage configuration (web GUI?)
   - handle errors
-- handle versions vector (https://forum.syncthing.net/t/wrong-icon-out-of-sync/5935/4)
-- Pull blocks in parallel (consider using syncthing pullers?)
 - fix connections mux
 - obey folder device configuration
 - obey decrease in cache size on restart
