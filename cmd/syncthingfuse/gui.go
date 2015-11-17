@@ -104,6 +104,7 @@ func (s *apiSvc) getMux() *http.ServeMux {
 
 	getApiMux := http.NewServeMux()
 	getApiMux.HandleFunc("/api/system/config", s.getSystemConfig)
+	getApiMux.HandleFunc("/api/verify/deviceid", s.getDeviceID) // id
 
 	postApiMux := http.NewServeMux()
 	postApiMux.HandleFunc("/api/system/config", s.postSystemConfig)       // <body>
@@ -167,6 +168,22 @@ func (s *apiSvc) String() string {
 func (s *apiSvc) getSystemConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(s.cfg.Raw())
+}
+
+func (s *apiSvc) getDeviceID(w http.ResponseWriter, r *http.Request) {
+	qs := r.URL.Query()
+	idStr := qs.Get("id")
+	id, err := protocol.DeviceIDFromString(idStr)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err == nil {
+		json.NewEncoder(w).Encode(map[string]string{
+			"id": id.String(),
+		})
+	} else {
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": err.Error(),
+		})
+	}
 }
 
 func (s *apiSvc) postSystemConfig(w http.ResponseWriter, r *http.Request) {

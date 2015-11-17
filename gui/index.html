@@ -36,7 +36,7 @@
             <div class="col-md-6">
                 <h3>Devices</h3>
                 <div class="panel panel-default" ng-repeat="deviceCfg in [thisDevice()]">
-                    <div class="panel-heading"><h3 class="panel-title"><span class="glyphicon glyphicon-folder-open"></span> {{ deviceCfg.name }}</h3></div>
+                    <div class="panel-heading"><h3 class="panel-title"><span class="glyphicon glyphicon-hdd"></span> {{ deviceCfg.name }}</h3></div>
                     <div class="panel-body">
                         <table class="table table-condensed">
                             <tr>
@@ -46,16 +46,39 @@
                         </table>
                     </div>
                 </div>
-                <ul>
-                    <li ng-repeat="device in otherDevices()">
-                        {{ device.name }}
-                    </li>
-                </ul>
+                <div class="panel panel-default" ng-repeat="device in otherDevices()">
+                    <div class="panel-heading"><h3 class="panel-title"><span class="glyphicon glyphicon-cloud"></span> {{ device.name }}</h3></div>
+                    <div class="panel-body">
+                        <table class="table table-condensed">
+                            <tr>
+                                <th>Address</th>
+                                <td>{{ device.addresses.join(", ") }}</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <div class="panel-footer">
+                        <span class="pull-right">
+                            <button type="button" class="btn btn-sm btn-default" ng-click="editDevice(device)">
+                                <span class="glyphicon glyphicon-pencil"></span>&nbsp;Edit
+                            </button>
+                        </span>
+                        <div class="clearfix"></div>
+                    </div>
+                </div>
+                <div>
+                    <span class="pull-right">
+                        <button type="button" class="btn btn-sm btn-default" ng-click="addDevice()">
+                            <span class="glyphicon glyphicon-plus"></span>&nbsp;Add Device
+                        </button>
+                    </span>
+                    <div class="clearfix"></div>
+                </div>
             </div>
         </div>
     </div>
 
     <div edit-folder-modal></div>
+    <div edit-device-modal></div>
 
     <!-- prereqs -->
     <script src="vendor/angular-1.4.7/angular.min.js"></script>
@@ -64,6 +87,9 @@
     <!-- core module -->
     <script src="js/core/module.js"></script>
     <script src="js/core/core.js"></script>
+    <!-- device module -->
+    <script src="js/device/module.js"></script>
+    <script src="js/device/editDeviceModalDirective.js"></script>
     <!-- folder module -->
     <script src="js/folder/module.js"></script>
     <script src="js/folder/editFolderModalDirective.js"></script>
