@@ -226,8 +226,6 @@ func (m *Model) pullBlock(folder string, filepath string, offset int64, block pr
 		conn := m.protoConn[deviceWithFile]
 		requestedData, requestError := conn.Request(folder, filepath, offset, int(block.Size), block.Hash, flags, []protocol.Option{})
 		if requestError == nil {
-			l.Debugln("Block expected size", block.Size, "received", len(requestedData))
-
 			// check hash
 			actualHash := sha256.Sum256(requestedData)
 			if bytes.Equal(actualHash[:], block.Hash) {

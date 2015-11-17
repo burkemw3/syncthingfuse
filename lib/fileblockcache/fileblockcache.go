@@ -51,6 +51,7 @@ func NewFileBlockCache(cfg *config.Wrapper, db *bolt.DB, fldrCfg config.FolderCo
 	l.Infoln("Folder", d.folder, "with cache", d.maximumBytesStored, "bytes")
 
 	d.db.Update(func(tx *bolt.Tx) error {
+		// create buckets
 		b, err := tx.CreateBucketIfNotExists(d.folderBucketKey)
 		if err != nil {
 			l.Warnln("error creating bucket for folder", d.folder, err)
@@ -61,6 +62,8 @@ func NewFileBlockCache(cfg *config.Wrapper, db *bolt.DB, fldrCfg config.FolderCo
 			l.Warnln("error creating cached files bucket for folder", d.folder, err)
 			return err
 		}
+
+		// update in-memory data cache
 		cfb.ForEach(func(k, v []byte) error {
 			buf := bytes.NewBuffer(v)
 			dec := gob.NewDecoder(buf)
@@ -77,6 +80,10 @@ func NewFileBlockCache(cfg *config.Wrapper, db *bolt.DB, fldrCfg config.FolderCo
 
 			return nil
 		})
+
+		// evict, in case cache size has decreased
+		d.evictForSizeUnsafe(cfb, 0)
+
 		return nil
 	})
 
@@ -171,25 +178,7 @@ func (d *FileBlockCache) AddCachedFileData(block protocol.BlockInfo, data []byte
 			l.Debugln("Putting block", b64.URLEncoding.EncodeToString(block.Hash), "with", block.Size, "bytes. max bytes", d.maximumBytesStored)
 		}
 
-		// make room for new block
-		for d.currentBytesStored+block.Size > d.maximumBytesStored && d.leastRecentlyUsed != nil {
-			// evict LRU
-			victim, _ := getEntryUnsafely(cfb, d.leastRecentlyUsed)
-			d.leastRecentlyUsed = victim.Previous
-
-			// remove from db
-			cfb.Delete(victim.Hash)
-
-			// remove from disk
-			diskCachePath := getDiskCachePath(d.cfg, d.folder, victim.Hash)
-			os.Remove(diskCachePath)
-
-			d.currentBytesStored -= victim.Size
-
-			if debug {
-				l.Debugln("Evicted", b64.URLEncoding.EncodeToString(victim.Hash), "for", victim.Size, "bytes. currently stored", d.currentBytesStored)
-			}
-		}
+		d.evictForSizeUnsafe(cfb, block.Size)
 
 		// add current node to front in db
 		current := fileCacheEntry{
@@ -221,6 +210,35 @@ func (d *FileBlockCache) AddCachedFileData(block protocol.BlockInfo, data []byte
 
 		return nil
 	})
+}
+
+func (d *FileBlockCache) evictForSizeUnsafe(cfb *bolt.Bucket, blockSize int32) {
+	for d.currentBytesStored+blockSize > d.maximumBytesStored && d.leastRecentlyUsed != nil {
+		// evict LRU
+		victim, _ := getEntryUnsafely(cfb, d.leastRecentlyUsed)
+		d.leastRecentlyUsed = victim.Previous
+
+		if victim.Previous == nil {
+			d.mostRecentlyUsed = nil
+		} else {
+			previous, _ := getEntryUnsafely(cfb, victim.Previous)
+			previous.Next = nil
+			setEntryUnsafely(cfb, previous)
+		}
+
+		// remove from db
+		cfb.Delete(victim.Hash)
+
+		// remove from disk
+		diskCachePath := getDiskCachePath(d.cfg, d.folder, victim.Hash)
+		os.Remove(diskCachePath)
+
+		d.currentBytesStored -= victim.Size
+
+		if debug {
+			l.Debugln("Evicted", b64.URLEncoding.EncodeToString(victim.Hash), "for", victim.Size, "bytes. currently stored", d.currentBytesStored)
+		}
+	}
 }
 
 func getDiskCachePath(cfg *config.Wrapper, folder string, blockHash []byte) string {
