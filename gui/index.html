@@ -18,7 +18,11 @@
                         <table class="table table-condensed">
                             <tr>
                                 <th>Maximum cache size</th>
-                                <td>{{ folder.cacheSize }}</td>
+                                <td class="text-right">{{ folder.cacheSize }}</td>
+                            </tr>
+                            <tr>
+                                <th>Shared With</th>
+                                <td class="text-right">{{sharesFolder(folder)}}</td>
                             </tr>
                         </table>
                     </div>
@@ -31,6 +35,14 @@
                         <div class="clearfix"></div>
                     </div>
                 </div>
+                <div>
+                    <span class="pull-right">
+                        <button type="button" class="btn btn-sm btn-default" ng-click="addFolder()">
+                            <span class="glyphicon glyphicon-plus"></span>&nbsp;Add Folder
+                        </button>
+                    </span>
+                    <div class="clearfix"></div>
+                </div>
                 <div class="clearfix"></div>
             </div>
             <div class="col-md-6">
@@ -41,7 +53,7 @@
                         <table class="table table-condensed">
                             <tr>
                                 <th>Mount Point</th>
-                                <td>{{ config.mountPoint }}</td>
+                                <td class="text-right">{{ config.mountPoint }}</td>
                             </tr>
                         </table>
                     </div>
@@ -52,7 +64,7 @@
                         <table class="table table-condensed">
                             <tr>
                                 <th>Address</th>
-                                <td>{{ device.addresses.join(", ") }}</td>
+                                <td class="text-right">{{ device.addresses.join(", ") }}</td>
                             </tr>
                         </table>
                     </div>

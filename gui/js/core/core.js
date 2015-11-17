@@ -3,7 +3,33 @@ angular.module('syncthingfuse.core').controller('SyncthingFuseController', funct
 
     $http.get('/api/system/config').success(function(data) {
         $scope.config = data;
+
+        $scope.config.folders.sort(function(a, b) {
+            return a.id.localeCompare(b.id);
+        });
+        $scope.config.devices.sort(function(a, b) {
+            return a.deviceID.localeCompare(b.deviceID);
+        });
     });
+
+    $scope.findDevice = function (deviceID) {
+        var matches = $scope.config.devices.filter(function (n) { return n.deviceID === deviceID; });
+        if (matches.length !== 1) {
+            return undefined;
+        }
+        return matches[0];
+    };
+
+    $scope.sharesFolder = function (folderCfg) {
+        var names = [];
+        folderCfg.devices.forEach(function (device) {
+            if (device.deviceID != $scope.config.myID) {
+                names.push($scope.deviceName($scope.findDevice(device.deviceID)));
+            }
+        });
+        names.sort();
+        return names.join(", ");
+    };
 
     $scope.thisDevice = function () {
         for (var i = 0; i < $scope.config.devices.length; i++) {
@@ -25,6 +51,16 @@ angular.module('syncthingfuse.core').controller('SyncthingFuseController', funct
         }
 
         return devices;
+    };
+
+    $scope.deviceName = function (deviceCfg) {
+        if (typeof deviceCfg === 'undefined') {
+            return "";
+        }
+        if (deviceCfg.name) {
+            return deviceCfg.name;
+        }
+        return deviceCfg.deviceID.substr(0, 6);
     };
 
     $scope.addDevice = function() {
@@ -67,6 +103,9 @@ angular.module('syncthingfuse.core').controller('SyncthingFuseController', funct
         if (false === $scope.editingExisting) {
             // add to devices
             $scope.config.devices.push(deviceCfg);
+            $scope.config.devices.sort(function(a, b) {
+                return a.deviceID.localeCompare(b.deviceID);
+            });
         }
 
         // edit device
@@ -115,8 +154,25 @@ angular.module('syncthingfuse.core').controller('SyncthingFuseController', funct
         $scope.saveConfig();
     };
 
+    $scope.addFolder = function() {
+        $scope.currentFolder = {
+            selectedDevices: {},
+            cacheSize: '512 MiB'
+        };
+
+        $scope.editingExisting = false;
+        $scope.folderEditor.$setPristine();
+        $('#editFolder').modal();
+    };
+
     $scope.editFolder = function(folderCfg) {
         $scope.currentFolder = angular.copy(folderCfg);
+
+        $scope.currentFolder.selectedDevices = {};
+        folderCfg.devices.forEach(function (n) {
+            $scope.currentFolder.selectedDevices[n.deviceID] = true;
+        });
+
         $scope.editingExisting = true;
         $scope.folderEditor.$setPristine();
         $('#editFolder').modal();
@@ -124,17 +180,37 @@ angular.module('syncthingfuse.core').controller('SyncthingFuseController', funct
 
     $scope.saveFolder = function() {
         $('#editFolder').modal('hide');
+
         var folderCfg = $scope.currentFolder;
+        folderCfg.devices = [];
+        $scope.config.devices.forEach(function (d) {
+            if (folderCfg.selectedDevices[d.deviceID]) {
+                folderCfg.devices.push({ deviceID: d.deviceID });
+            }
+        });
 
         var folders = [];
+        folders.push(folderCfg);
         for (var i=0 ; i<$scope.config.folders.length ; i++) {
-            if ($scope.config.folders[i].id === folderCfg.id) {
-                folders.push(folderCfg)
-            } else {
+            if ($scope.config.folders[i].id !== folderCfg.id) {
                 folders.push($scope.config.folders[i])
             }
         }
         $scope.config.folders = folders;
+        $scope.config.folders.sort(function(a, b) {
+            return a.id.localeCompare(b.id);
+        });
+
+        $scope.saveConfig();
+    };
+
+    $scope.deleteFolder = function() {
+        $('#editFolder').modal('hide');
+
+        var folderCfg = $scope.currentFolder;
+
+        var i = $scope.config.folders.findIndex(function(el) { return el.id === folderCfg.id });
+        $scope.config.folders.splice(i, 1)
 
         $scope.saveConfig();
     };

@@ -10,12 +10,12 @@ TODO
 
 - manage configuration (web GUI?)
   - handle errors
-  - manipulate folders
 - handle versions vector (https://forum.syncthing.net/t/wrong-icon-out-of-sync/5935/4)
 - Pull blocks in parallel (consider using syncthing pullers?)
 - FUSE: read file blocks, not ReadAll (https://godoc.org/bazil.org/fuse/fs#HandleReadAller)
 - fix connections mux
 - obey folder device configuration
+- obey decrease in cache size on restart
 - Figure out releasing, installing, configuring, updating, etc
   - base on recent ST Prime code
 - show connection status in gui
@@ -26,6 +26,7 @@ TODO
   - would be nice to allow some files to be indexed. maybe we can detect the spotlight process and index conditionally
   - show status information in special FUSE files
 - track cache statistics
+- prefetch some data: get 1st block from each file, then 2nd, etc
 - switch to LRU-2Q file cache
 - Pin files for offline
 - Support writes.
