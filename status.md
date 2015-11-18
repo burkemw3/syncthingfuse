@@ -10,7 +10,6 @@ TODO
 
 - manage configuration (web GUI?)
   - handle errors
-- fix connections mux
 - obey folder device configuration
 - Figure out releasing, installing, configuring, updating, etc
   - test on linux

@@ -7,15 +7,18 @@ import (
 	"net"
 	"os"
 	"path"
+	"time"
 
 	"github.com/boltdb/bolt"
 	"github.com/burkemw3/syncthing-fuse/lib/config"
 	"github.com/burkemw3/syncthing-fuse/lib/model"
 	"github.com/calmh/logger"
+	stconfig "github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/connections"
 	"github.com/syncthing/syncthing/lib/discover"
 	"github.com/syncthing/syncthing/lib/osutil"
 	"github.com/syncthing/syncthing/lib/protocol"
+	"github.com/syncthing/syncthing/lib/relay"
 	"github.com/thejerf/suture"
 )
 
@@ -113,12 +116,11 @@ func main() {
 
 	m = model.NewModel(cfg, database)
 
-	cachedDiscovery := startDiscovery()
-	mainSvc.Add(cachedDiscovery)
+	cachedDiscovery, relaySvc := setupConnections(cfg.AsStCfg(myID), tlsCfg, cert, mainSvc)
 
 	lans, _ := osutil.GetLans()
 
-	connectionSvc := connections.NewConnectionSvc(cfg.AsStCfg(myID), myID, m, tlsCfg, cachedDiscovery, nil /* TODO relaySvc */, bepProtocolName, tlsDefaultCommonName, lans)
+	connectionSvc := connections.NewConnectionSvc(cfg.AsStCfg(myID), myID, m, tlsCfg, cachedDiscovery, relaySvc, bepProtocolName, tlsDefaultCommonName, lans)
 	mainSvc.Add(connectionSvc)
 
 	if cfg.Raw().GUI.Enabled {
@@ -145,10 +147,59 @@ func openDatabase(cfg *config.Wrapper) *bolt.DB {
 	return database
 }
 
-func startDiscovery() *discover.CachingMux {
+// The discovery results are sorted by their source priority.
+const (
+	ipv6LocalDiscoveryPriority = iota
+	ipv4LocalDiscoveryPriority
+	globalDiscoveryPriority
+)
+
+func setupConnections(cfg *stconfig.Wrapper, tlsCfg *tls.Config, cert tls.Certificate, mainSvc *suture.Supervisor) (*discover.CachingMux, *relay.Svc) {
+	opts := cfg.Raw().Options
+
+	var relaySvc *relay.Svc
+	if opts.RelaysEnabled && (opts.GlobalAnnEnabled || opts.RelayWithoutGlobalAnn) {
+		relaySvc = relay.NewSvc(cfg, tlsCfg)
+		mainSvc.Add(relaySvc)
+	}
+
 	cachedDiscovery := discover.NewCachingMux()
+	mainSvc.Add(cachedDiscovery)
 
-	// TODO build discovery MUX
+	listenAddressList := newAddressLister(cfg)
 
-	return cachedDiscovery
+	if opts.GlobalAnnEnabled {
+		for _, srv := range cfg.GlobalDiscoveryServers() {
+			l.Infoln("Using discovery server", srv)
+			gd, err := discover.NewGlobal(srv, cert, listenAddressList, relaySvc)
+			if err != nil {
+				l.Warnln("Global discovery:", err)
+				continue
+			}
+
+			// Each global discovery server gets its results cached for five
+			// minutes, and is not asked again for a minute when it's returned
+			// unsuccessfully.
+			cachedDiscovery.Add(gd, 5*time.Minute, time.Minute, globalDiscoveryPriority)
+		}
+	}
+
+	if opts.LocalAnnEnabled {
+		// v4 broadcasts
+		bcd, err := discover.NewLocal(myID, fmt.Sprintf(":%d", opts.LocalAnnPort), listenAddressList, relaySvc)
+		if err != nil {
+			l.Warnln("IPv4 local discovery:", err)
+		} else {
+			cachedDiscovery.Add(bcd, 0, 0, ipv4LocalDiscoveryPriority)
+		}
+		// v6 multicasts
+		mcd, err := discover.NewLocal(myID, opts.LocalAnnMCAddr, listenAddressList, relaySvc)
+		if err != nil {
+			l.Warnln("IPv6 local discovery:", err)
+		} else {
+			cachedDiscovery.Add(mcd, 0, 0, ipv6LocalDiscoveryPriority)
+		}
+	}
+
+	return cachedDiscovery, relaySvc
 }

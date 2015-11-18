@@ -46,7 +46,16 @@ func (f FolderConfiguration) GetCacheSizeBytes() (int32, error) {
 }
 
 type OptionsConfiguration struct {
-	ListenAddress []string `xml:"listenAddress" json:"listenAddress" default:"tcp://0.0.0.0:22000"`
+	ListenAddress              []string `xml:"listenAddress" json:"listenAddress" default:"tcp://0.0.0.0:22000"`
+	LocalAnnounceEnabled       bool     `xml:"localAnnounceEnabled" json:"localAnnounceEnabled" default:"true"`
+	LocalAnnouncePort          int      `xml:"localAnnouncePort" json:"localAnnouncePort" default:"21027"`
+	LocalAnnounceMCAddr        string   `xml:"localAnnounceMCAddr" json:"localAnnounceMCAddr"`
+	GlobalAnnounceEnabled      bool     `xml:"globalAnnounceEnabled" json:"globalAnnounceEnabled" default:"true"`
+	GlobalAnnounceServers      []string `xml:"globalAnnounceServer" json:"globalAnnounceServers" default:"default"`
+	RelaysEnabled              bool     `xml:"relaysEnabled" json:"relaysEnabled" default:"true"`
+	RelayWithoutGlobalAnnounce bool     `xml:"relayWithoutGlobalAnn" json:"relayWithoutGlobalAnn" default:"false"`
+	RelayServers               []string `xml:"relayServer" json:"relayServers" default:"dynamic+https://relays.syncthing.net/endpoint"`
+	RelayReconnectIntervalM    int      `xml:"relayReconnectIntervalM" json:"relayReconnectIntervalM" default:"10"`
 }
 
 func New(myID protocol.DeviceID) Configuration {
