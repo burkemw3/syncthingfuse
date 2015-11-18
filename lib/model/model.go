@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
 
 	"github.com/boltdb/bolt"
 	"github.com/burkemw3/syncthing-fuse/lib/config"
@@ -60,7 +61,47 @@ func NewModel(cfg *config.Wrapper, db *bolt.DB) *Model {
 		m.filesByDevice[folder] = make(map[protocol.DeviceID][]string)
 	}
 
+	m.removeUnconfiguredFolders()
+
 	return m
+}
+
+func (m *Model) removeUnconfiguredFolders() {
+	m.db.Update(func(tx *bolt.Tx) error {
+		deletedFolders := make([]string, 0)
+
+		tx.ForEach(func(name []byte, b *bolt.Bucket) error {
+			folderName := string(name)
+			if _, ok := m.blockCaches[folderName]; ok {
+				return nil
+			}
+
+			// folder no longer in configuration, clean it out!
+
+			if debug {
+				l.Debugln("cleaning up deleted folder", folderName)
+			}
+
+			diskCacheFolder := fileblockcache.GetDiskCacheBasePath(m.cfg, folderName)
+			err := os.RemoveAll(diskCacheFolder)
+			if err != nil {
+				l.Warnln("Cannot cleanup deleted folder", folderName, err)
+			}
+
+			deletedFolders = append(deletedFolders, folderName)
+
+			return nil
+		})
+
+		for _, deletedFolder := range deletedFolders {
+			err := tx.DeleteBucket([]byte(deletedFolder))
+			if err != nil {
+				l.Warnln("Cannot cleanup deleted folder's bucket", deletedFolder, err)
+			}
+		}
+
+		return nil
+	})
 }
 
 func (m *Model) AddConnection(conn stmodel.Connection) {

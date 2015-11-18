@@ -87,7 +87,7 @@ func NewFileBlockCache(cfg *config.Wrapper, db *bolt.DB, fldrCfg config.FolderCo
 		return nil
 	})
 
-	diskCacheFolder := path.Join(path.Dir(d.cfg.ConfigPath()), d.folder)
+	diskCacheFolder := GetDiskCacheBasePath(d.cfg, d.folder)
 	os.Mkdir(diskCacheFolder, 0744)
 
 	return d, nil
@@ -239,6 +239,10 @@ func (d *FileBlockCache) evictForSizeUnsafe(cfb *bolt.Bucket, blockSize int32) {
 			l.Debugln("Evicted", b64.URLEncoding.EncodeToString(victim.Hash), "for", victim.Size, "bytes. currently stored", d.currentBytesStored)
 		}
 	}
+}
+
+func GetDiskCacheBasePath(cfg *config.Wrapper, folder string) string {
+	return path.Join(path.Dir(cfg.ConfigPath()), folder)
 }
 
 func getDiskCachePath(cfg *config.Wrapper, folder string, blockHash []byte) string {
