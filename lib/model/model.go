@@ -29,6 +29,7 @@ type Model struct {
 	filesByDevice map[string]map[protocol.DeviceID][]string
 	blockCaches   map[string]*fileblockcache.FileBlockCache
 	treeCaches    map[string]*filetreecache.FileTreeCache
+	folderDevices map[string][]protocol.DeviceID
 	fmut          sync.RWMutex // protects file information. must not be acquired after pmut
 }
 
@@ -44,6 +45,7 @@ func NewModel(cfg *config.Wrapper, db *bolt.DB) *Model {
 		treeCaches:    make(map[string]*filetreecache.FileTreeCache),
 		devicesByFile: make(map[string]map[string][]protocol.DeviceID),
 		filesByDevice: make(map[string]map[protocol.DeviceID][]string),
+		folderDevices: make(map[string][]protocol.DeviceID),
 		fmut:          sync.NewRWMutex(),
 	}
 
@@ -59,6 +61,10 @@ func NewModel(cfg *config.Wrapper, db *bolt.DB) *Model {
 
 		m.devicesByFile[folder] = make(map[string][]protocol.DeviceID)
 		m.filesByDevice[folder] = make(map[protocol.DeviceID][]string)
+		m.folderDevices[folder] = make([]protocol.DeviceID, len(folderCfg.Devices))
+		for i, device := range folderCfg.Devices {
+			m.folderDevices[folder][i] = device.DeviceID
+		}
 	}
 
 	m.removeUnconfiguredFolders()
@@ -163,14 +169,11 @@ func (m *Model) HasFolder(folder string) bool {
 	return result
 }
 
-func (m *Model) GetEntry(folder string, path string) protocol.FileInfo {
+func (m *Model) GetEntry(folder string, path string) (protocol.FileInfo, bool) {
 	m.fmut.RLock()
+	defer m.fmut.RUnlock()
 
-	entry, _ := m.treeCaches[folder].GetEntry(path)
-
-	m.fmut.RUnlock()
-
-	return entry
+	return m.treeCaches[folder].GetEntry(path)
 }
 
 func (m *Model) GetFileData(folder string, filepath string, readStart int64, readSize int) ([]byte, error) {
@@ -219,7 +222,7 @@ func (m *Model) GetFileData(folder string, filepath string, readStart int64, rea
 }
 
 // requires fmut and pmut read locks (or better) before entry
-func (m *Model) copyBlockToData(folder string, filepath string, readStart int64, readEnd int64, blockStart int64, blockEnd int64, block protocol.BlockInfo, data []byte, messages chan bool) { // TODO add channel
+func (m *Model) copyBlockToData(folder string, filepath string, readStart int64, readEnd int64, blockStart int64, blockEnd int64, block protocol.BlockInfo, data []byte, messages chan bool) {
 	blockData, blockFound := m.blockCaches[folder].GetCachedBlockData(block.Hash)
 
 	if false == blockFound {
@@ -305,8 +308,17 @@ func (m *Model) Index(deviceID protocol.DeviceID, folder string, files []protoco
 		l.Debugln("model: receiving index from device", deviceID, "for folder", folder)
 	}
 
-	// supersede previous index (remove device from devicesByFile lookup)
 	m.fmut.Lock()
+	defer m.fmut.Unlock()
+
+	if false == m.isFolderSharedWithDevice(folder, deviceID) {
+		if debug {
+			l.Debugln("model:", deviceID, "not shared with folder", folder, "so ignoring")
+		}
+		return
+	}
+
+	// supersede previous index (remove device from devicesByFile lookup)
 	if filesByDevice, ok := m.filesByDevice[folder]; ok {
 		if files, ok := filesByDevice[deviceID]; ok {
 			for _, file := range files {
@@ -329,7 +341,6 @@ func (m *Model) Index(deviceID protocol.DeviceID, folder string, files []protoco
 			}
 		}
 	}
-	m.fmut.Unlock()
 
 	m.updateIndex(deviceID, folder, files)
 }
@@ -340,12 +351,31 @@ func (m *Model) IndexUpdate(deviceID protocol.DeviceID, folder string, files []p
 		l.Debugln("model: receiving index from device", deviceID, "for folder", folder)
 	}
 
+	m.fmut.Lock()
+	defer m.fmut.Unlock()
+
+	if false == m.isFolderSharedWithDevice(folder, deviceID) {
+		if debug {
+			l.Debugln("model:", deviceID, "not shared with folder", folder, "so ignoring")
+		}
+		return
+	}
+
 	m.updateIndex(deviceID, folder, files)
 }
 
-func (m *Model) updateIndex(deviceID protocol.DeviceID, folder string, files []protocol.FileInfo) {
-	m.fmut.Lock()
+// required fmut read (or better) lock before entry
+func (m *Model) isFolderSharedWithDevice(folder string, deviceID protocol.DeviceID) bool {
+	for _, device := range m.folderDevices[folder] {
+		if device.Equals(deviceID) {
+			return true
+		}
+	}
+	return false
+}
 
+// requires write lock on model.fmut before entry
+func (m *Model) updateIndex(deviceID protocol.DeviceID, folder string, files []protocol.FileInfo) {
 	treeCache, ok := m.treeCaches[folder]
 	if !ok {
 		if debug {
@@ -385,8 +415,6 @@ func (m *Model) updateIndex(deviceID protocol.DeviceID, folder string, files []p
 			continue
 		}
 	}
-
-	m.fmut.Unlock()
 }
 
 // requires write lock on model.fmut before entry

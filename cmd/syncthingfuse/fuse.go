@@ -144,7 +144,14 @@ func (d Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	if debugFuse {
 		l.Debugln("Dir Attr folder", d.folder, "path", d.path)
 	}
-	entry := d.m.GetEntry(d.folder, d.path)
+	entry, found := d.m.GetEntry(d.folder, d.path)
+
+	// TODO assert directory?
+
+	if false == found {
+		return fuse.ENOENT
+	}
+
 	a.Mode = os.ModeDir | 0555
 	a.Mtime = time.Unix(entry.Modified, 0)
 	return nil
@@ -154,7 +161,11 @@ func (d Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	if debugFuse {
 		l.Debugln("Dir Lookup folder", d.folder, "path", d.path, "for", name)
 	}
-	entry := d.m.GetEntry(d.folder, filepath.Join(d.path, name))
+	entry, found := d.m.GetEntry(d.folder, filepath.Join(d.path, name))
+
+	if false == found {
+		return nil, fuse.ENOENT
+	}
 
 	var node fs.Node
 	if entry.IsDirectory() {
@@ -205,7 +216,13 @@ type File struct {
 }
 
 func (f File) Attr(ctx context.Context, a *fuse.Attr) error {
-	entry := f.m.GetEntry(f.folder, f.path)
+	entry, found := f.m.GetEntry(f.folder, f.path)
+
+	// TODO assert file?
+
+	if false == found {
+		return fuse.ENOENT
+	}
 
 	a.Mode = 0444
 	a.Mtime = time.Unix(entry.Modified, 0)

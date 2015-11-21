@@ -8,15 +8,21 @@ import (
 
 	"github.com/boltdb/bolt"
 	"github.com/burkemw3/syncthing-fuse/lib/config"
+	stconfig "github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/protocol"
+)
+
+var (
+	deviceAlice, _ = protocol.DeviceIDFromString("FFR6LPZ-7K4PTTV-UXQSMUU-CPQ5YWH-OEDFIIQ-JUG777G-2YQXXR5-YD6AWQR")
+	deviceBob, _   = protocol.DeviceIDFromString("GYRZZQB-IRNPV4Z-T7TC52W-EQYJ3TT-FDQW6MW-DFLMU42-SSSU6EM-FBK2VAY")
+	deviceCarol, _ = protocol.DeviceIDFromString("LGFPDIT-7SKNNJL-VJZA4FC-7QNCRKA-CE753K7-2BW5QDK-2FOZ7FR-FEP57QJ")
 )
 
 func TestModelSingleIndex(t *testing.T) {
 	// init
 	dir, _ := ioutil.TempDir("", "stf-mt")
 	defer os.RemoveAll(dir)
-	deviceID, _ := protocol.DeviceIDFromString("FFR6LPZ-7K4PTTV-UXQSMUU-CPQ5YWH-OEDFIIQ-JUG777G-2YQXXR5-YD6AWQR")
-	cfg, database, folder := setup(deviceID, dir)
+	cfg, database, folder := setup(deviceAlice, dir, deviceBob)
 
 	// Arrange
 	model := NewModel(cfg, database)
@@ -32,7 +38,7 @@ func TestModelSingleIndex(t *testing.T) {
 	}
 
 	// Act
-	model.Index(deviceID, folder, files, flags, options)
+	model.Index(deviceBob, folder, files, flags, options)
 
 	// Assert
 	children := model.GetChildren(folder, ".")
@@ -50,19 +56,48 @@ func TestModelSingleIndex(t *testing.T) {
 		t.Error("expected 2 children, but got", len(children))
 	}
 
-	assertEntry(t, model.GetEntry(folder, "file1"), "file1", 0)
-	assertEntry(t, model.GetEntry(folder, "file2"), "file2", 0)
-	assertEntry(t, model.GetEntry(folder, "dir1"), "dir1", protocol.FlagDirectory)
-	assertEntry(t, model.GetEntry(folder, "dir1/dirfile1"), "dir1/dirfile1", 0)
-	assertEntry(t, model.GetEntry(folder, "dir1/dirfile2"), "dir1/dirfile2", 0)
+	assertEntry(t, model, folder, "file1", 0)
+	assertEntry(t, model, folder, "file2", 0)
+	assertEntry(t, model, folder, "dir1", protocol.FlagDirectory)
+	assertEntry(t, model, folder, "dir1/dirfile1", 0)
+	assertEntry(t, model, folder, "dir1/dirfile2", 0)
+}
+
+func TestIndexFromUnsharedPeerIgnored(t *testing.T) {
+	// init
+	dir, _ := ioutil.TempDir("", "stf-mt")
+	defer os.RemoveAll(dir)
+	cfg, database, folder := setup(deviceAlice, dir, deviceBob)
+
+	// Arrange
+	model := NewModel(cfg, database)
+	flags := uint32(0)
+	options := []protocol.Option{}
+
+	files := []protocol.FileInfo{
+		protocol.FileInfo{Name: "file1"},
+	}
+
+	// Act
+	model.Index(deviceCarol, folder, files, flags, options)
+
+	// Assert
+	children := model.GetChildren(folder, ".")
+	if len(children) != 0 {
+		t.Error("expected 0 children, but got", len(children))
+	}
+
+	_, found := model.GetEntry(folder, files[0].Name)
+	if found {
+		t.Error("expected unfound file, but found", files[0].Name)
+	}
 }
 
 func TestModelIndexWithRestart(t *testing.T) {
 	// init
 	dir, _ := ioutil.TempDir("", "stf-mt")
 	defer os.RemoveAll(dir)
-	deviceID, _ := protocol.DeviceIDFromString("FFR6LPZ-7K4PTTV-UXQSMUU-CPQ5YWH-OEDFIIQ-JUG777G-2YQXXR5-YD6AWQR")
-	cfg, database, folder := setup(deviceID, dir)
+	cfg, database, folder := setup(deviceAlice, dir, deviceBob)
 
 	// Arrange
 	model := NewModel(cfg, database)
@@ -77,7 +112,7 @@ func TestModelIndexWithRestart(t *testing.T) {
 		protocol.FileInfo{Name: "dir1/dirfile2"},
 	}
 
-	model.Index(deviceID, folder, files, flags, options)
+	model.Index(deviceBob, folder, files, flags, options)
 
 	// Act (restart db and model)
 	databasePath := database.Path()
@@ -101,19 +136,18 @@ func TestModelIndexWithRestart(t *testing.T) {
 		t.Error("expected 2 children, but got", len(children))
 	}
 
-	assertEntry(t, model.GetEntry(folder, "file1"), "file1", 0)
-	assertEntry(t, model.GetEntry(folder, "file2"), "file2", 0)
-	assertEntry(t, model.GetEntry(folder, "dir1"), "dir1", protocol.FlagDirectory)
-	assertEntry(t, model.GetEntry(folder, "dir1/dirfile1"), "dir1/dirfile1", 0)
-	assertEntry(t, model.GetEntry(folder, "dir1/dirfile2"), "dir1/dirfile2", 0)
+	assertEntry(t, model, folder, "file1", 0)
+	assertEntry(t, model, folder, "file2", 0)
+	assertEntry(t, model, folder, "dir1", protocol.FlagDirectory)
+	assertEntry(t, model, folder, "dir1/dirfile1", 0)
+	assertEntry(t, model, folder, "dir1/dirfile2", 0)
 }
 
 func TestModelSingleIndexUpdate(t *testing.T) {
 	// init
 	dir, _ := ioutil.TempDir("", "stf-mt")
 	defer os.RemoveAll(dir)
-	deviceID, _ := protocol.DeviceIDFromString("FFR6LPZ-7K4PTTV-UXQSMUU-CPQ5YWH-OEDFIIQ-JUG777G-2YQXXR5-YD6AWQR")
-	cfg, database, folder := setup(deviceID, dir)
+	cfg, database, folder := setup(deviceAlice, dir, deviceBob)
 
 	// Arrange
 	model := NewModel(cfg, database)
@@ -135,7 +169,7 @@ func TestModelSingleIndexUpdate(t *testing.T) {
 		protocol.FileInfo{Name: "dir2file/file2", Version: version},
 		protocol.FileInfo{Name: "file2symlink", Version: version},
 	}
-	model.Index(deviceID, folder, files, flags, options)
+	model.Index(deviceBob, folder, files, flags, options)
 
 	// Act
 	version = protocol.Vector{protocol.Counter{1, 1}}
@@ -146,7 +180,7 @@ func TestModelSingleIndexUpdate(t *testing.T) {
 		protocol.FileInfo{Name: "dir2file/file1", Flags: protocol.FlagDeleted, Version: version},
 		protocol.FileInfo{Name: "file2symlink", Flags: protocol.FlagSymlink, Version: version},
 	}
-	model.IndexUpdate(deviceID, folder, files, flags, options)
+	model.IndexUpdate(deviceBob, folder, files, flags, options)
 
 	// Assert
 	children := model.GetChildren(folder, ".")
@@ -165,12 +199,12 @@ func TestModelSingleIndexUpdate(t *testing.T) {
 		t.Error("expected 2 children, but got", len(children))
 	}
 
-	assertEntry(t, model.GetEntry(folder, "unchangedFile"), "unchangedFile", 0)
-	assertEntry(t, model.GetEntry(folder, "file2dir"), "file2dir", protocol.FlagDirectory)
-	assertEntry(t, model.GetEntry(folder, "dir1"), "dir1", protocol.FlagDirectory)
-	assertEntry(t, model.GetEntry(folder, "dir1/dirfile1"), "dir1/dirfile1", 0)
-	assertEntry(t, model.GetEntry(folder, "dir1/dirfile2"), "dir1/dirfile2", 0)
-	assertEntry(t, model.GetEntry(folder, "dir2file"), "dir2file", 0)
+	assertEntry(t, model, folder, "unchangedFile", 0)
+	assertEntry(t, model, folder, "file2dir", protocol.FlagDirectory)
+	assertEntry(t, model, folder, "dir1", protocol.FlagDirectory)
+	assertEntry(t, model, folder, "dir1/dirfile1", 0)
+	assertEntry(t, model, folder, "dir1/dirfile2", 0)
+	assertEntry(t, model, folder, "dir2file", 0)
 }
 
 func assertContainsChild(t *testing.T, children []protocol.FileInfo, name string, flags uint32) {
@@ -183,7 +217,14 @@ func assertContainsChild(t *testing.T, children []protocol.FileInfo, name string
 	t.Error("Missing file", name)
 }
 
-func assertEntry(t *testing.T, entry protocol.FileInfo, name string, flags uint32) {
+func assertEntry(t *testing.T, model *Model, folder string, name string, flags uint32) {
+	entry, found := model.GetEntry(folder, name)
+
+	if false == found {
+		t.Error("file expected, but not found:", name)
+		return
+	}
+
 	if entry.Name == name && entry.Flags == flags {
 		return
 	}
@@ -191,7 +232,7 @@ func assertEntry(t *testing.T, entry protocol.FileInfo, name string, flags uint3
 	t.Error("incorrect entry for file", name)
 }
 
-func setup(deviceID protocol.DeviceID, dir string) (*config.Wrapper, *bolt.DB, string) {
+func setup(deviceID protocol.DeviceID, dir string, peers ...protocol.DeviceID) (*config.Wrapper, *bolt.DB, string) {
 	configFile, _ := ioutil.TempFile(dir, "config")
 	realCfg := config.New(deviceID)
 	cfg := config.Wrap(configFile.Name(), realCfg)
@@ -203,6 +244,10 @@ func setup(deviceID protocol.DeviceID, dir string) (*config.Wrapper, *bolt.DB, s
 	folderCfg := config.FolderConfiguration{
 		ID:        folder,
 		CacheSize: "1MiB",
+		Devices:   make([]stconfig.FolderDeviceConfiguration, len(peers)),
+	}
+	for i, peer := range peers {
+		folderCfg.Devices[i] = stconfig.FolderDeviceConfiguration{DeviceID: peer}
 	}
 	cfg.SetFolder(folderCfg)
 

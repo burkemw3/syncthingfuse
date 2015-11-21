@@ -10,7 +10,12 @@ TODO
 
 - manage configuration (web GUI?)
   - handle errors
-- obey folder device configuration
+- handle folder device config change on restart
+  - folder shared with bob & carol
+  - Bob has file: a
+  - Carol has file: b
+  - unshare bob
+  - model only has file b
 - Figure out releasing, installing, configuring, updating, etc
   - test on linux
   - base on recent ST Prime code
