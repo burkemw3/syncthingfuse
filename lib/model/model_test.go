@@ -93,6 +93,43 @@ func TestIndexFromUnsharedPeerIgnored(t *testing.T) {
 	}
 }
 
+func TestPeerRemovedRestart(t *testing.T) {
+	// init
+	dir, _ := ioutil.TempDir("", "stf-mt")
+	defer os.RemoveAll(dir)
+	cfg, database, folder := setup(deviceAlice, dir, deviceBob, deviceCarol)
+
+	// Arrange
+	model := NewModel(cfg, database)
+	flags := uint32(0)
+	options := []protocol.Option{}
+
+	files := []protocol.FileInfo{
+		protocol.FileInfo{Name: "file1"},
+	}
+	model.Index(deviceBob, folder, files, flags, options)
+
+	files = []protocol.FileInfo{
+		protocol.FileInfo{Name: "file2"},
+	}
+	model.Index(deviceCarol, folder, files, flags, options)
+
+	// Act
+	cfg.Raw().Folders[0].Devices = []stconfig.FolderDeviceConfiguration{
+		stconfig.FolderDeviceConfiguration{DeviceID: deviceCarol},
+	}
+	model = NewModel(cfg, database)
+
+	// Assert
+	children := model.GetChildren(folder, ".")
+	assertContainsChild(t, children, "file2", 0)
+	if len(children) != 1 {
+		t.Error("expected 1 children, but got", len(children))
+	}
+
+	assertEntry(t, model, folder, "file2", 0)
+}
+
 func TestModelIndexWithRestart(t *testing.T) {
 	// init
 	dir, _ := ioutil.TempDir("", "stf-mt")

@@ -25,8 +25,6 @@ type Model struct {
 	protoConn map[protocol.DeviceID]stmodel.Connection
 	pmut      sync.RWMutex // protects protoConn and rawConn. must not be acquired before fmut
 
-	devicesByFile map[string]map[string][]protocol.DeviceID
-	filesByDevice map[string]map[protocol.DeviceID][]string
 	blockCaches   map[string]*fileblockcache.FileBlockCache
 	treeCaches    map[string]*filetreecache.FileTreeCache
 	folderDevices map[string][]protocol.DeviceID
@@ -43,8 +41,6 @@ func NewModel(cfg *config.Wrapper, db *bolt.DB) *Model {
 
 		blockCaches:   make(map[string]*fileblockcache.FileBlockCache),
 		treeCaches:    make(map[string]*filetreecache.FileTreeCache),
-		devicesByFile: make(map[string]map[string][]protocol.DeviceID),
-		filesByDevice: make(map[string]map[protocol.DeviceID][]string),
 		folderDevices: make(map[string][]protocol.DeviceID),
 		fmut:          sync.NewRWMutex(),
 	}
@@ -57,10 +53,8 @@ func NewModel(cfg *config.Wrapper, db *bolt.DB) *Model {
 			l.Warnln("Skipping folder", folder, "because fileblockcache init failed:", err)
 		}
 		m.blockCaches[folder] = fbc
-		m.treeCaches[folder] = filetreecache.NewFileTreeCache(m.cfg, db, folder)
+		m.treeCaches[folder] = filetreecache.NewFileTreeCache(folderCfg, db, folder)
 
-		m.devicesByFile[folder] = make(map[string][]protocol.DeviceID)
-		m.filesByDevice[folder] = make(map[protocol.DeviceID][]string)
 		m.folderDevices[folder] = make([]protocol.DeviceID, len(folderCfg.Devices))
 		for i, device := range folderCfg.Devices {
 			m.folderDevices[folder][i] = device.DeviceID
@@ -151,8 +145,8 @@ func (m *Model) IsPaused(deviceID protocol.DeviceID) bool {
 
 func (m *Model) GetFolders() []string {
 	m.fmut.RLock()
-	folders := make([]string, 0, len(m.devicesByFile))
-	for k := range m.devicesByFile {
+	folders := make([]string, 0, len(m.treeCaches))
+	for k := range m.treeCaches {
 		folders = append(folders, k)
 	}
 	m.fmut.RUnlock()
@@ -162,7 +156,7 @@ func (m *Model) GetFolders() []string {
 func (m *Model) HasFolder(folder string) bool {
 	result := false
 	m.fmut.RLock()
-	if _, ok := m.devicesByFile[folder]; ok {
+	if _, ok := m.treeCaches[folder]; ok {
 		result = true
 	}
 	m.fmut.RUnlock()
@@ -261,13 +255,18 @@ func (m *Model) pullBlock(folder string, filepath string, offset int64, block pr
 	flags := uint32(0)
 
 	// Get block from a device
-	devices := m.devicesByFile[folder][filepath]
+	devices, _ := m.treeCaches[folder].GetEntryDevices(filepath)
 	for _, deviceIndex := range rand.Perm(len(devices)) {
 		deviceWithFile := devices[deviceIndex]
+		conn, ok := m.protoConn[deviceWithFile]
+		if !ok { // not connected to device
+			continue
+		}
+
 		if debug {
 			l.Debugln("Trying to fetch block at offset", offset, "for", folder, filepath, "from device", deviceWithFile)
 		}
-		conn := m.protoConn[deviceWithFile]
+
 		requestedData, requestError := conn.Request(folder, filepath, offset, int(block.Size), block.Hash, flags, []protocol.Option{})
 		if requestError == nil {
 			// check hash
@@ -318,30 +317,6 @@ func (m *Model) Index(deviceID protocol.DeviceID, folder string, files []protoco
 		return
 	}
 
-	// supersede previous index (remove device from devicesByFile lookup)
-	if filesByDevice, ok := m.filesByDevice[folder]; ok {
-		if files, ok := filesByDevice[deviceID]; ok {
-			for _, file := range files {
-				devices := m.devicesByFile[folder][file]
-				candidate := 0
-				for ; candidate < len(devices); candidate = candidate + 1 {
-					if devices[candidate].Equals(deviceID) {
-						break
-					}
-				}
-				if candidate < len(devices) {
-					if len(devices) == 1 {
-						delete(m.devicesByFile[folder], file)
-					} else {
-						devices[candidate] = devices[len(devices)-1]
-						devices = devices[:len(devices)-1]
-						m.devicesByFile[folder][file] = devices
-					}
-				}
-			}
-		}
-	}
-
 	m.updateIndex(deviceID, folder, files)
 }
 
@@ -381,139 +356,60 @@ func (m *Model) updateIndex(deviceID protocol.DeviceID, folder string, files []p
 		if debug {
 			l.Debugln("folder", folder, "from", deviceID.String(), "not configured, skipping")
 		}
-		m.fmut.Unlock()
 		return
 	}
 
 	for _, file := range files {
 		entry, existsInLocalModel := treeCache.GetEntry(file.Name)
 
-		if !existsInLocalModel {
-			if debug {
-				l.Debugln("file", file.Name, "from", deviceID.String(), "does not exist in local model, trying to add")
-			}
-			m.addToLocalModel(deviceID, folder, file)
-			continue
+		var globalToLocal protocol.Ordering
+		if existsInLocalModel {
+			globalToLocal = file.Version.Compare(entry.Version)
 		}
 
-		localToGlobal := entry.Version.Compare(file.Version)
-		if localToGlobal == protocol.Equal {
-			if debug {
-				l.Debugln("peer", deviceID.String(), "has same version for file", file.Name, ", adding as peer.")
-			}
-			m.addPeerForEntry(deviceID, folder, file)
-			continue
-		}
-
-		if localToGlobal == protocol.Lesser || localToGlobal == protocol.ConcurrentLesser {
-			if debug {
-				l.Debugln("peer", deviceID.String(), "has new version for file", file.Name, ", replacing current data.")
-			}
-			m.removeEntryFromLocalModel(folder, file.Name)
-			m.addToLocalModel(deviceID, folder, file)
-			// TODO probably want to re-fill disk cache if file small enough (10MB?) or within certain size (5%?)
-			continue
-		}
-	}
-}
-
-// requires write lock on model.fmut before entry
-// requires file does not exist in local model
-func (m *Model) addToLocalModel(deviceID protocol.DeviceID, folder string, file protocol.FileInfo) {
-	if file.IsDeleted() {
 		if debug {
-			l.Debugln("peer", deviceID.String(), "has deleted file, doing nothing", file.Name)
+			l.Debugln("updating entry for", file.Name, "from", deviceID.Short(), existsInLocalModel, globalToLocal)
 		}
-		return
-	}
-	if file.IsInvalid() {
-		if debug {
-			l.Debugln("peer", deviceID.String(), "has invalid file, doing nothing", file.Name)
-		}
-		return
-	}
-	if file.IsSymlink() {
-		if debug {
-			l.Debugln("peer", deviceID.String(), "has symlink, doing nothing", file.Name)
-		}
-		return
-	}
 
-	if debug && file.IsDirectory() {
-		l.Debugln("peer", deviceID.String(), "has directory, adding", file.Name)
-	} else if debug {
-		l.Debugln("peer", deviceID.String(), "has file, adding", file.Name)
-	}
-
-	m.treeCaches[folder].AddEntry(file)
-
-	m.addPeerForEntry(deviceID, folder, file)
-}
-
-// requires write lock on model.fmut before entry
-func (m *Model) addPeerForEntry(deviceID protocol.DeviceID, folder string, file protocol.FileInfo) {
-	peers, ok := m.devicesByFile[folder][file.Name]
-	if ok {
-		shouldAdd := true
-		for candidate := 0; candidate < len(peers); candidate = candidate + 1 {
-			if peers[candidate].Equals(deviceID) {
-				shouldAdd = false
-				break
+		// remove if necessary
+		if existsInLocalModel && (globalToLocal == protocol.Greater || (file.Version.Concurrent(entry.Version) && file.WinsConflict(entry))) {
+			if debug {
+				l.Debugln("remove entry for", file.Name, "from", deviceID.Short())
 			}
+
+			treeCache.RemoveEntry(file.Name)
 		}
-		if shouldAdd {
-			peers = append(peers, deviceID)
-			m.devicesByFile[folder][file.Name] = peers
-		}
-	} else {
-		peers = make([]protocol.DeviceID, 1)
-		peers[0] = deviceID
-		m.devicesByFile[folder][file.Name] = peers
-	}
-}
 
-// remove any children and self from local model
-// requires write lock on model.fmut before entry
-func (m *Model) removeEntryFromLocalModel(folder string, filePath string) {
-	entries := m.treeCaches[folder].GetChildren(filePath)
-	for _, childPath := range entries {
-		m.removeEntryFromLocalModel(folder, childPath)
-	}
-
-	if debug {
-		_, ok := m.treeCaches[folder].GetEntry(filePath)
-		if ok {
-			l.Debugln("file exists in local model, so removing", filePath)
-		}
-	}
-
-	// remove file entry
-	m.treeCaches[folder].RemoveEntry(filePath)
-
-	// remove files by device lookup
-	for _, device := range m.devicesByFile[folder][filePath] {
-		if files, ok := m.filesByDevice[folder][device]; ok {
-			victim := len(files)
-			for i, file := range files {
-				if file == filePath {
-					victim = i
-					break
+		// add if necessary
+		if !existsInLocalModel || (globalToLocal == protocol.Greater || (file.Version.Concurrent(entry.Version) && file.WinsConflict(entry))) || (globalToLocal == protocol.Equal) {
+			if file.IsDeleted() {
+				if debug {
+					l.Debugln("peer", deviceID.Short(), "has deleted file, doing nothing", file.Name)
 				}
+				continue
 			}
-			if victim < len(files) {
-				if len(files) == 1 {
-					delete(m.filesByDevice[folder], device)
-				} else {
-					files[victim] = files[len(files)-1]
-					files = files[:len(files)-1]
-					m.filesByDevice[folder][device] = files
+			if file.IsInvalid() {
+				if debug {
+					l.Debugln("peer", deviceID.Short(), "has invalid file, doing nothing", file.Name)
 				}
+				continue
 			}
+			if file.IsSymlink() {
+				if debug {
+					l.Debugln("peer", deviceID.Short(), "has symlink, doing nothing", file.Name)
+				}
+				continue
+			}
+
+			if debug && file.IsDirectory() {
+				l.Debugln("add directory", file.Name, "from", deviceID.Short())
+			} else if debug {
+				l.Debugln("add file", file.Name, "from", deviceID.Short())
+			}
+
+			treeCache.AddEntry(file, deviceID)
 		}
 	}
-
-	// remove devices by file lookup
-	delete(m.devicesByFile[folder], filePath)
 }
 
 // A request was made by the peer device
@@ -531,37 +427,4 @@ func (m *Model) Close(deviceID protocol.DeviceID, err error) {
 	m.pmut.Lock()
 	delete(m.protoConn, deviceID)
 	m.pmut.Unlock()
-
-	m.fmut.Lock()
-
-	// remove devices by file lookup
-	for folder, _ := range m.filesByDevice {
-		for _, file := range m.filesByDevice[folder][deviceID] {
-			if devices, ok := m.devicesByFile[folder][file]; ok {
-				victim := len(devices)
-				for i, device := range devices {
-					if device == deviceID {
-						victim = i
-						break
-					}
-				}
-				if victim < len(devices) {
-					if len(devices) == 1 {
-						delete(m.devicesByFile[folder], file)
-					} else {
-						devices[victim] = devices[len(devices)-1]
-						devices = devices[:len(devices)-1]
-						m.devicesByFile[folder][file] = devices
-					}
-				}
-			}
-		}
-	}
-
-	// remove files by device lookup
-	for _, filesByDevice := range m.filesByDevice {
-		delete(filesByDevice, deviceID)
-	}
-
-	m.fmut.Unlock()
 }

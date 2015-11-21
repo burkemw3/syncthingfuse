@@ -144,13 +144,10 @@ func (d Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	if debugFuse {
 		l.Debugln("Dir Attr folder", d.folder, "path", d.path)
 	}
-	entry, found := d.m.GetEntry(d.folder, d.path)
+
+	entry, _ := d.m.GetEntry(d.folder, d.path)
 
 	// TODO assert directory?
-
-	if false == found {
-		return fuse.ENOENT
-	}
 
 	a.Mode = os.ModeDir | 0555
 	a.Mtime = time.Unix(entry.Modified, 0)

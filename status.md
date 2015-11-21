@@ -10,12 +10,12 @@ TODO
 
 - manage configuration (web GUI?)
   - handle errors
-- handle folder device config change on restart
-  - folder shared with bob & carol
-  - Bob has file: a
-  - Carol has file: b
-  - unshare bob
-  - model only has file b
+- show if restart needed in UI
+- restart from UI/API
+- write readme
+  - where does it mount
+  - how to use the UI
+- move todo to github issues
 - Figure out releasing, installing, configuring, updating, etc
   - test on linux
   - base on recent ST Prime code
@@ -31,6 +31,7 @@ TODO
 - switch to LRU-2Q file cache
 - Pin files for offline
 - Support writes.
+- upnp?
 - manage Unified Buffer Cache
   - OSX caches files! probably good, hard to update correctly
   - https://github.com/osxfuse/osxfuse/wiki/SSHFS#frequently-asked-questions
