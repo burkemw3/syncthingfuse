@@ -39,3 +39,4 @@ Does not support:
 - accurate reporting of status: SyncthingFUSE will always appear as 0% synced on Syncthing devices
 - symlink files
 - UPnP
+- introducers: additional peers will not be added automatically
