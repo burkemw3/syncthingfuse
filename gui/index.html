@@ -9,6 +9,18 @@
         <div class="row">
             <h3>Syncthing FUSE</h3>
         </div>
+
+        <div ng-if="!configInSync" class="row">
+            <div class="col-md-12">
+                <div class="panel panel-warning">
+                    <div class="panel-heading"><h3 class="panel-title"><span class="glyphicon glyphicon-exclamation-circle"></span><span>Restart Needed</span></h3></div>
+                    <div class="panel-body">
+                        <p>The configuration has been saved but not activated. You must restart SyncthingFUSE to activate the new configuration.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="row">
             <div class="col-md-6">
                 <h3>Folders</h3>

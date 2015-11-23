@@ -1,5 +1,6 @@
 angular.module('syncthingfuse.core').controller('SyncthingFuseController', function ($scope, $http) {
     $scope.config = { devices: [] };
+    $scope.configInSync = true;
 
     $http.get('/api/system/config').success(function(data) {
         $scope.config = data;
@@ -11,6 +12,10 @@ angular.module('syncthingfuse.core').controller('SyncthingFuseController', funct
             return a.deviceID.localeCompare(b.deviceID);
         });
     });
+
+    $http.get('/api/system/config/insync').then(
+        function(response) { $scope.configInSync = response.data; },
+        function() { /* TODO handle error */ });
 
     $scope.findDevice = function (deviceID) {
         var matches = $scope.config.devices.filter(function (n) { return n.deviceID === deviceID; });
@@ -247,13 +252,13 @@ angular.module('syncthingfuse.core').controller('SyncthingFuseController', funct
                 'Content-Type': 'application/json'
             }
         };
-        $http.post('/api/system/config', cfg, opts).success(function () {
-            console.log("saved config successfully"); // TODO show real message
-        }).error($scope.emitHTTPError);
-    };
-
-    $scope.emitHTTPError = function (data, status, headers, config) {
-        // TODO handle errors for serious
-        $scope.$emit('HTTPError', {data: data, status: status, headers: headers, config: config});
+        $http.post('/api/system/config', cfg, opts).then(
+            function () {
+                $scope.configInSync = false;
+                window.scrollTo(0, 0);
+            },
+            function () {
+                // TODO show error message
+            });
     };
 });

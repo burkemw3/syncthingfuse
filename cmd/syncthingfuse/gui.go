@@ -33,6 +33,7 @@ type apiSvc struct {
 	assetDir        string
 	listener        net.Listener
 	stop            chan struct{}
+	configInSync    bool
 	systemConfigMut sync.Mutex
 }
 
@@ -46,6 +47,7 @@ func newAPISvc(id protocol.DeviceID, cfg *config.Wrapper) (*apiSvc, error) {
 		cfg:             cfg,
 		assetDir:        guiAssets,
 		systemConfigMut: sync.NewMutex(),
+		configInSync:    true,
 	}
 
 	var err error
@@ -104,6 +106,7 @@ func (s *apiSvc) getMux() *http.ServeMux {
 
 	getApiMux := http.NewServeMux()
 	getApiMux.HandleFunc("/api/system/config", s.getSystemConfig)
+	getApiMux.HandleFunc("/api/system/config/insync", s.getSystemConfigInSync)
 	getApiMux.HandleFunc("/api/verify/deviceid", s.getDeviceID) // id
 
 	postApiMux := http.NewServeMux()
@@ -170,6 +173,11 @@ func (s *apiSvc) getSystemConfig(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(s.cfg.Raw())
 }
 
+func (s *apiSvc) getSystemConfigInSync(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(s.configInSync)
+}
+
 func (s *apiSvc) getDeviceID(w http.ResponseWriter, r *http.Request) {
 	qs := r.URL.Query()
 	idStr := qs.Get("id")
@@ -201,6 +209,7 @@ func (s *apiSvc) postSystemConfig(w http.ResponseWriter, r *http.Request) {
 
 	// Activate and save
 	resp := s.cfg.Replace(to)
+	s.configInSync = false
 	if resp.ValidationError != nil {
 		http.Error(w, resp.ValidationError.Error(), 400)
 		return

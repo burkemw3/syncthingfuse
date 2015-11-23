@@ -10,8 +10,6 @@ TODO
 
 - manage configuration (web GUI?)
   - handle errors
-- show if restart needed in UI
-- restart from UI/API
 - move todo to github issues
 - support linux
 - Figure out releasing, installing, configuring, updating, etc
@@ -25,10 +23,13 @@ TODO
   - would be nice to allow some files to be indexed. maybe we can detect the spotlight process and index conditionally
   - show status information in special FUSE files
 - track cache statistics
-- prefetch some data: get 1st block from each file, then 2nd, etc
+- prefetch data blocks, based on patterns
+  - file blocks in order
+  - files in a folder in an order (name, size, mod date, etc)
 - switch to LRU-2Q file cache
 - Pin files for offline
 - Support writes.
+- restart from UI/API
 - upnp?
 - manage Unified Buffer Cache
   - OSX caches files! probably good, hard to update correctly
