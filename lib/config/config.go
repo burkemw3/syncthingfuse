@@ -58,7 +58,7 @@ type OptionsConfiguration struct {
 	RelayReconnectIntervalM    int      `xml:"relayReconnectIntervalM" json:"relayReconnectIntervalM" default:"10"`
 }
 
-func New(myID protocol.DeviceID) Configuration {
+func New(myID protocol.DeviceID, myName string) Configuration {
 	var cfg Configuration
 	cfg.Version = CurrentVersion
 
@@ -66,6 +66,12 @@ func New(myID protocol.DeviceID) Configuration {
 	setDefaults(&cfg)
 	setDefaults(&cfg.GUI)
 	setDefaults(&cfg.Options)
+
+	thisDevice, _ := protocol.DeviceIDFromString(cfg.MyID)
+	thisDeviceCfg := config.NewDeviceConfiguration(thisDevice, myName)
+	thisDeviceCfg.Addresses = []string{"dynamic"}
+	cfg.Folders = []FolderConfiguration{}
+	cfg.Devices = []config.DeviceConfiguration{thisDeviceCfg}
 
 	cfg.prepare()
 

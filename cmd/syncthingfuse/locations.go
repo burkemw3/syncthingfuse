@@ -1,7 +1,8 @@
 package main
 
 import (
-	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -74,13 +75,21 @@ func defaultConfigDir() string {
 	case "darwin":
 		dir, err := osutil.ExpandTilde("~/Library/Application Support/SyncthingFUSE")
 		if err != nil {
-			fmt.Println("foobar")
+			l.Fatalln(err)
+		}
+		return dir
+	case "linux":
+		if xdgCfg := os.Getenv("XDG_CONFIG_HOME"); xdgCfg != "" {
+			return filepath.Join(xdgCfg, "syncthing")
+		}
+		dir, err := osutil.ExpandTilde("~/.config/syncthingfuse")
+		if err != nil {
 			l.Fatalln(err)
 		}
 		return dir
 
 	default:
-		l.Fatalln("Only OS X supported right now!")
+		l.Fatalln("Only OS X and Linux supported right now!")
 	}
 
 	return "nil"

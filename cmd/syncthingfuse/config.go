@@ -50,7 +50,7 @@ func ensureDir(dir string, mode int) {
 }
 
 func defaultConfig(myName string) config.Configuration {
-	newCfg := config.New(myID)
+	newCfg := config.New(myID, myName)
 
 	port, err := getFreePort("0.0.0.0", 22000)
 	if err != nil {

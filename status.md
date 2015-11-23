@@ -11,10 +11,10 @@ TODO
 - manage configuration (web GUI?)
   - handle errors
 - move todo to github issues
-- support linux
 - Figure out releasing, installing, configuring, updating, etc
   - test on linux
   - base on recent ST Prime code
+- Why is linux slower? platters?
 - show connection status in gui
 - undo actions in UI
 - FUSE
