@@ -12,10 +12,8 @@ TODO
   - handle errors
 - show if restart needed in UI
 - restart from UI/API
-- write readme
-  - where does it mount
-  - how to use the UI
 - move todo to github issues
+- support linux
 - Figure out releasing, installing, configuring, updating, etc
   - test on linux
   - base on recent ST Prime code
