@@ -9,9 +9,9 @@ import (
 	"os"
 
 	"github.com/boltdb/bolt"
-	"github.com/burkemw3/syncthing-fuse/lib/config"
-	"github.com/burkemw3/syncthing-fuse/lib/fileblockcache"
-	"github.com/burkemw3/syncthing-fuse/lib/filetreecache"
+	"github.com/burkemw3/syncthingfuse/lib/config"
+	"github.com/burkemw3/syncthingfuse/lib/fileblockcache"
+	"github.com/burkemw3/syncthingfuse/lib/filetreecache"
 	"github.com/cznic/mathutil"
 	stmodel "github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"

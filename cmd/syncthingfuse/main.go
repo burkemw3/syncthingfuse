@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/boltdb/bolt"
-	"github.com/burkemw3/syncthing-fuse/lib/config"
-	"github.com/burkemw3/syncthing-fuse/lib/model"
+	"github.com/burkemw3/syncthingfuse/lib/config"
+	"github.com/burkemw3/syncthingfuse/lib/model"
 	"github.com/calmh/logger"
 	stconfig "github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/connections"
@@ -49,7 +49,7 @@ var (
 )
 
 const (
-	usage      = "syncthing-fuse [options]"
+	usage      = "syncthingfuse [options]"
 	extraUsage = `
 The default configuration directory is:
 

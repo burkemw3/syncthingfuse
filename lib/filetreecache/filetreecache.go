@@ -7,7 +7,7 @@ import (
 	"path"
 
 	"github.com/boltdb/bolt"
-	"github.com/burkemw3/syncthing-fuse/lib/config"
+	"github.com/burkemw3/syncthingfuse/lib/config"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
 
