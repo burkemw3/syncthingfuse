@@ -111,7 +111,9 @@ func (s *apiSvc) getMux() *http.ServeMux {
 	getApiMux.HandleFunc("/api/system/config", s.getSystemConfig)
 	getApiMux.HandleFunc("/api/system/config/insync", s.getSystemConfigInSync)
 	getApiMux.HandleFunc("/api/system/connections", s.getSystemConnections)
+	getApiMux.HandleFunc("/api/system/pins/status", s.getPinStatus)
 	getApiMux.HandleFunc("/api/verify/deviceid", s.getDeviceID) // id
+	getApiMux.HandleFunc("/api/db/browse", s.getDBBrowse)       // folderID pathPrefix
 
 	postApiMux := http.NewServeMux()
 	postApiMux.HandleFunc("/api/system/config", s.postSystemConfig)       // <body>
@@ -187,6 +189,11 @@ func (s *apiSvc) getSystemConnections(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(s.model.GetConnections())
 }
 
+func (s *apiSvc) getPinStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(s.model.GetPinsStatusByFolder())
+}
+
 func (s *apiSvc) getDeviceID(w http.ResponseWriter, r *http.Request) {
 	qs := r.URL.Query()
 	idStr := qs.Get("id")
@@ -201,6 +208,16 @@ func (s *apiSvc) getDeviceID(w http.ResponseWriter, r *http.Request) {
 			"error": err.Error(),
 		})
 	}
+}
+
+func (s *apiSvc) getDBBrowse(w http.ResponseWriter, r *http.Request) {
+	qs := r.URL.Query()
+	folderID := qs.Get("folderID")
+	pathPrefix := qs.Get("pathPrefix")
+
+	paths := s.model.GetPathsMatchingPrefix(folderID, pathPrefix)
+
+	json.NewEncoder(w).Encode(paths)
 }
 
 func (s *apiSvc) postSystemConfig(w http.ResponseWriter, r *http.Request) {

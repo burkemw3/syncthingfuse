@@ -1,0 +1,43 @@
+<div id="editPins" class="modal fade" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title">
+                    <span class="glyphicon glyphicon-pencil"></span><span>Edit pinned files for {{ currentFolder.id }}</span>
+                </h4>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    <p>Pinned files are always available locally (after being fetched from peers).</p>
+                    <p>Pinned file storage does not count toward the cache size. So, the data for this folder could take up cache size plus the size of pinned files.</p>
+                </div>
+                <form name="pinsAdder" ng-submit="addPin()">
+                    <div class="form-group">
+                        <label for="pinFilePath">File path</label>
+                        <div class="icon-addon addon-md">
+                            <input name="pinFilePath" id="pinFilePath" class="form-control" type="text" ng-model="pinFilePath" ng-change="updatePinsAutocomplete()" list="pin-file-list" autofocus />
+                            <span class="glyphicon glyphicon-plus" ng-click="addPin()" style="cursor:pointer;"></span>
+                        </div>
+                        <datalist id="pin-file-list">
+                            <option ng-repeat="file in pinAutocomplete" value="{{ file }}" />
+                        </datalist>
+                        <p class="help-block">
+                            Path of pinned file to always store in cache.
+                        </p>
+                    </div>
+                </form>
+                <div>
+                    <div ng-repeat="file in currentFolder.pinnedFiles"><span class="glyphicon glyphicon-trash" style="cursor:pointer;" ng-click="removePin(file)"></span>&nbsp;{{ file }}</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary btn-sm" ng-click="savePins()">
+                    <span class="glyphicon glyphicon-check"></span>&nbsp;<span>Save</span>
+                </button>
+                <button type="button" class="btn btn-default btn-sm" data-dismiss="modal">
+                    <span class="glyphicon glyphicon-times"></span>&nbsp;<span>Close</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>

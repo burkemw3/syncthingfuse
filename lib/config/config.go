@@ -30,9 +30,10 @@ type Configuration struct {
 }
 
 type FolderConfiguration struct {
-	ID        string                             `xml:"id,attr" json:"id"`
-	Devices   []config.FolderDeviceConfiguration `xml:"device" json:"devices"`
-	CacheSize string                             `xml:"cacheSize" json:"cacheSize" default:"512MiB"`
+	ID          string                             `xml:"id,attr" json:"id"`
+	Devices     []config.FolderDeviceConfiguration `xml:"device" json:"devices"`
+	CacheSize   string                             `xml:"cacheSize" json:"cacheSize" default:"512MiB"`
+	PinnedFiles []string                           `xml:"pinnedFiles" json:"pinnedFiles"`
 }
 
 type GUIConfiguration struct {

@@ -1,9 +1,11 @@
 angular.module('syncthingfuse.core').controller('SyncthingFuseController', function ($scope, $http) {
     $scope.config = { devices: [] };
     $scope.connections = {};
+    $scope.pinnedFileStatus = {};
     $scope.configInSync = true;
 
     function initController() {
+        $scope.refresh()
         setInterval($scope.refresh, 10000);
     }
 
@@ -15,6 +17,12 @@ angular.module('syncthingfuse.core').controller('SyncthingFuseController', funct
                     newConnections[connection.DeviceID] = connection
                 });
                 $scope.connections = newConnections;
+            },
+            function() { /* TODO handle error */ });
+
+        $http.get('/api/system/pins/status').then(
+            function(response) {
+                $scope.pinnedFileStatus = response.data;
             },
             function() { /* TODO handle error */ });
     };
@@ -264,9 +272,70 @@ angular.module('syncthingfuse.core').controller('SyncthingFuseController', funct
         var folderCfg = $scope.currentFolder;
 
         var i = $scope.config.folders.findIndex(function(el) { return el.id === folderCfg.id });
-        $scope.config.folders.splice(i, 1)
+        $scope.config.folders.splice(i, 1);
 
         $scope.saveConfig();
+    };
+
+    $scope.editPinnedFiles = function(folder) {
+        $scope.currentFolder = angular.copy(folder);
+
+        if (null == $scope.currentFolder.pinnedFiles) {
+            $scope.currentFolder.pinnedFiles = [];
+        }
+
+        $scope.editingExisting = true;
+        $('#editPins').modal();
+    };
+
+    $scope.addPin = function() {
+        var toAdd = $scope.pinFilePath.trim();
+
+        var i = $scope.currentFolder.pinnedFiles.findIndex(function(el) { return el === toAdd });
+        if (-1 == i) {
+            $scope.currentFolder.pinnedFiles.push($scope.pinFilePath);
+
+            $scope.currentFolder.pinnedFiles.sort(function(a, b) {
+                return a.localeCompare(b);
+            });
+        }
+        $scope.pinFilePath = "";
+    };
+
+    $scope.removePin = function(file) {
+        var i = $scope.currentFolder.pinnedFiles.findIndex(function(el) { return el === file });
+        $scope.currentFolder.pinnedFiles.splice(i, 1);
+    };
+
+    $scope.savePins = function() {
+        $('#editPins').modal('hide');
+
+        var folderCfg = $scope.currentFolder;
+        $scope.config.folders.forEach(function (f) {
+            if (f.id === folderCfg.id) {
+                f.pinnedFiles = folderCfg.pinnedFiles;
+            }
+        });
+
+        $scope.saveConfig();
+    };
+
+    $scope.pinAutocomplete = [];
+
+    $scope.updatePinsAutocomplete = function() {
+        if (!$scope.currentFolder) {
+            $scope.pinAutocomplete = [];
+            return;
+        }
+
+        var params = {
+            folderID: $scope.currentFolder.id,
+            pathPrefix: $scope.pinFilePath
+        };
+        $http.get('/api/db/browse', {params: params}).then(
+            function(result) { $scope.pinAutocomplete = result.data },
+            function() {} // TODO handle errors
+            );
     };
 
     $scope.saveConfig = function () {

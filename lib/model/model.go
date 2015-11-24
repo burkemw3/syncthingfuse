@@ -2,12 +2,14 @@ package model
 
 import (
 	"bytes"
+	"container/list"
 	"crypto/sha256"
 	b64 "encoding/base64"
 	"errors"
 	"fmt"
 	"math/rand"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -16,38 +18,47 @@ import (
 	"github.com/burkemw3/syncthingfuse/lib/fileblockcache"
 	"github.com/burkemw3/syncthingfuse/lib/filetreecache"
 	"github.com/cznic/mathutil"
+	human "github.com/dustin/go-humanize"
 	stmodel "github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
 	stsync "github.com/syncthing/syncthing/lib/sync"
 )
 
 type Model struct {
-	cfg *config.Wrapper
-	db  *bolt.DB
-
-	protoConn map[protocol.DeviceID]stmodel.Connection
-	pmut      stsync.RWMutex // protects protoConn and rawConn. must not be acquired before fmut
+	cfg         *config.Wrapper
+	db          *bolt.DB
+	pinnedFiles map[string][]string // read-only after initialization
 
 	blockCaches   map[string]*fileblockcache.FileBlockCache
 	treeCaches    map[string]*filetreecache.FileTreeCache
 	folderDevices map[string][]protocol.DeviceID
 	pulls         map[string]map[string]*blockPullStatus
 	fmut          stsync.RWMutex // protects file information. must not be acquired after pmut
+
+	pinnedList list.List
+	lmut       *sync.Cond // protects pull list. must not be acquired before fmut, nor after pmut
+
+	protoConn map[protocol.DeviceID]stmodel.Connection
+	pmut      stsync.RWMutex // protects protoConn and rawConn. must not be acquired before fmut
 }
 
 func NewModel(cfg *config.Wrapper, db *bolt.DB) *Model {
+	var lmutex sync.Mutex
 	m := &Model{
-		cfg: cfg,
-		db:  db,
-
-		protoConn: make(map[protocol.DeviceID]stmodel.Connection),
-		pmut:      stsync.NewRWMutex(),
+		cfg:         cfg,
+		db:          db,
+		pinnedFiles: make(map[string][]string),
 
 		blockCaches:   make(map[string]*fileblockcache.FileBlockCache),
 		treeCaches:    make(map[string]*filetreecache.FileTreeCache),
 		folderDevices: make(map[string][]protocol.DeviceID),
 		pulls:         make(map[string]map[string]*blockPullStatus),
 		fmut:          stsync.NewRWMutex(),
+
+		lmut: sync.NewCond(&lmutex),
+
+		protoConn: make(map[protocol.DeviceID]stmodel.Connection),
+		pmut:      stsync.NewRWMutex(),
 	}
 
 	for _, folderCfg := range m.cfg.Folders() {
@@ -56,6 +67,7 @@ func NewModel(cfg *config.Wrapper, db *bolt.DB) *Model {
 		fbc, err := fileblockcache.NewFileBlockCache(m.cfg, db, folderCfg)
 		if err != nil {
 			l.Warnln("Skipping folder", folder, "because fileblockcache init failed:", err)
+			continue
 		}
 		m.blockCaches[folder] = fbc
 		m.treeCaches[folder] = filetreecache.NewFileTreeCache(folderCfg, db, folder)
@@ -66,11 +78,45 @@ func NewModel(cfg *config.Wrapper, db *bolt.DB) *Model {
 		}
 
 		m.pulls[folder] = make(map[string]*blockPullStatus)
+
+		m.pinnedFiles[folder] = make([]string, len(folderCfg.PinnedFiles))
+		copy(m.pinnedFiles[folder], folderCfg.PinnedFiles)
+		sort.Strings(m.pinnedFiles[folder])
+		m.unpinUnnecessaryBlocks(folder)
 	}
 
 	m.removeUnconfiguredFolders()
 
+	for i := 0; i < 4; i++ {
+		go m.backgroundPinnerRoutine()
+	}
+
 	return m
+}
+
+func (m *Model) unpinUnnecessaryBlocks(folder string) {
+	candidates := list.New()
+	first, _ := m.treeCaches[folder].GetEntry("")
+	candidates.PushBack(first)
+
+	for candidates.Len() > 0 {
+		el := candidates.Front()
+		candidates.Remove(el)
+		entry, _ := el.Value.(protocol.FileInfo)
+
+		if false == m.isFilePinned(folder, entry.Name) {
+			for _, block := range entry.Blocks {
+				m.blockCaches[folder].UnpinBlock(block.Hash)
+			}
+		}
+
+		if entry.IsDirectory() {
+			children := m.treeCaches[folder].GetChildren(entry.Name)
+			for _, child := range children {
+				candidates.PushBack(child)
+			}
+		}
+	}
 }
 
 func (m *Model) removeUnconfiguredFolders() {
@@ -202,6 +248,19 @@ func (m *Model) HasFolder(folder string) bool {
 	return result
 }
 
+func (m *Model) GetPathsMatchingPrefix(folderID string, pathPrefix string) []string {
+	m.fmut.RLock()
+	defer m.fmut.RUnlock()
+
+	if ftc, ok := m.treeCaches[folderID]; ok {
+		return ftc.GetPathsMatchingPrefix(pathPrefix)
+	}
+
+	l.Debugln("no tree cache for", folderID)
+
+	return make([]string, 0)
+}
+
 func (m *Model) GetEntry(folder string, path string) (protocol.FileInfo, bool) {
 	m.fmut.RLock()
 	defer m.fmut.RUnlock()
@@ -231,6 +290,9 @@ func (m *Model) GetFileData(folder string, filepath string, readStart int64, rea
 	pendingBlocks := make([]pendingBlockRead, 0)
 	fbc := m.blockCaches[folder]
 
+	m.pmut.RLock()
+	defer m.pmut.RUnlock()
+
 	// create workers for pulling
 	for i, block := range entry.Blocks {
 		blockStart := int64(i * protocol.BlockSize)
@@ -249,13 +311,15 @@ func (m *Model) GetFileData(folder string, filepath string, readStart int64, rea
 						blockStart:      blockStart,
 						readEnd:         readEnd,
 						blockEnd:        blockEnd,
-						blockPullStatus: m.getOrCreatePullStatus("Fetch", folder, filepath, block, blockStart),
+						blockPullStatus: m.getOrCreatePullStatus("Fetch", folder, filepath, block, blockStart, assigned),
 					}
 					pendingBlocks = append(pendingBlocks, pendingBlock)
 				}
-			} else if blockStart < readEnd+protocol.BlockSize && false == fbc.HasCachedBlockData(block.Hash) {
-				// prefetch this block
-				m.getOrCreatePullStatus("Prefetch", folder, filepath, block, blockStart)
+			} else if blockStart < readEnd+protocol.BlockSize {
+				if false == fbc.HasCachedBlockData(block.Hash) && false == fbc.HasPinnedBlock(block.Hash) {
+					// prefetch this block
+					m.getOrCreatePullStatus("Prefetch", folder, filepath, block, blockStart, assigned)
+				}
 			}
 		}
 	}
@@ -266,14 +330,16 @@ func (m *Model) GetFileData(folder string, filepath string, readStart int64, rea
 	// wait for needed blocks
 	for _, pendingBlock := range pendingBlocks {
 		pendingBlock.blockPullStatus.cv.L.Lock()
-		for false == pendingBlock.blockPullStatus.done {
+		for done != pendingBlock.blockPullStatus.state {
 			pendingBlock.blockPullStatus.cv.Wait()
 		}
+		pendingBlock.blockPullStatus.cv.L.Unlock()
+		pendingBlock.blockPullStatus.mutex.RLock()
 		if pendingBlock.blockPullStatus.error != nil {
 			return []byte(""), pendingBlock.blockPullStatus.error
 		}
 		copyBlockData(pendingBlock.blockPullStatus.data, pendingBlock.readStart, pendingBlock.blockStart, pendingBlock.readEnd, pendingBlock.blockEnd, data)
-		pendingBlock.blockPullStatus.cv.L.Unlock()
+		pendingBlock.blockPullStatus.mutex.RUnlock()
 	}
 
 	if debug {
@@ -302,21 +368,29 @@ type pendingBlockRead struct {
 	blockPullStatus *blockPullStatus
 }
 
+type blockPullState int
+
+const (
+	queued blockPullState = iota
+	assigned
+	done
+)
+
 type blockPullStatus struct {
-	conns   []stmodel.Connection
 	comment string
 	folder  string
 	file    string
 	block   protocol.BlockInfo
 	offset  int64
-	done    bool
+	state   blockPullState
 	data    []byte
 	error   error
-	cv      *sync.Cond
+	mutex   *sync.RWMutex
+	cv      *sync.Cond // protects this data structure. cannot be acquired before any global locks (e.g. fmut)
 }
 
 // requires fmut write lock and pmut read lock (or better) before entry
-func (m *Model) getOrCreatePullStatus(comment string, folder string, file string, block protocol.BlockInfo, offset int64) *blockPullStatus {
+func (m *Model) getOrCreatePullStatus(comment string, folder string, file string, block protocol.BlockInfo, offset int64, state blockPullState) *blockPullStatus {
 	hash := b64.URLEncoding.EncodeToString(block.Hash)
 
 	pullStatus, ok := m.pulls[folder][hash]
@@ -324,78 +398,144 @@ func (m *Model) getOrCreatePullStatus(comment string, folder string, file string
 		return pullStatus
 	}
 
-	devices, _ := m.treeCaches[folder].GetEntryDevices(file)
-	conns := make([]stmodel.Connection, 0)
-	for _, deviceIndex := range rand.Perm(len(devices)) {
-		deviceWithFile := devices[deviceIndex]
-		conn, ok := m.protoConn[deviceWithFile]
-		if !ok { // not connected to device
-			continue
-		}
-		conns = append(conns, conn)
-	}
-
-	var mutex sync.Mutex
+	var mutex sync.RWMutex
 	pullStatus = &blockPullStatus{
-		conns:   conns,
 		comment: comment,
 		folder:  folder,
 		file:    file,
 		block:   block,
 		offset:  offset,
+		state:   state,
+		mutex:   &mutex,
 		cv:      sync.NewCond(&mutex),
 	}
 
 	m.pulls[folder][hash] = pullStatus
 
-	go m.pullBlock(pullStatus)
+	if assigned == state {
+		go m.pullBlock(pullStatus, true)
+	}
 
 	return pullStatus
 }
 
-func (m *Model) pullBlock(status *blockPullStatus) {
-	status.cv.L.Lock()
+func (m *Model) backgroundPinnerRoutine() {
+	var status *blockPullStatus
 
-	if debug {
-		l.Debugln(status.comment, "block at offset", status.offset, "size", status.block.Size, "for", status.folder, status.file)
-	}
-
-	flags := uint32(0)
-
-	var requestedData []byte
-	requestError := errors.New("can't get block from any devices")
-
-	for _, conn := range status.conns {
-		if debug {
-			l.Debugln("Trying to fetch block at offset", status.offset, "for", status.folder, status.file, "from device", conn.ID().String()[:5])
+	for {
+		m.lmut.L.Lock()
+		for 0 == m.pinnedList.Len() {
+			m.lmut.Wait()
 		}
+		el := m.pinnedList.Front()
+		m.pinnedList.Remove(el)
+		status, _ = el.Value.(*blockPullStatus)
+		m.lmut.L.Unlock()
 
-		requestedData, requestError = conn.Request(status.folder, status.file, status.offset, int(status.block.Size), status.block.Hash, flags, []protocol.Option{})
-		if requestError == nil {
-			// check hash
-			actualHash := sha256.Sum256(requestedData)
-			if bytes.Equal(actualHash[:], status.block.Hash) {
-				break
+		m.fmut.Lock()
+		status.mutex.RLock()
+		if m.isBlockStillNeeded(status) {
+			if m.blockCaches[status.folder].HasCachedBlockData(status.block.Hash) {
+				m.blockCaches[status.folder].PinExistingBlock(status.block)
 			} else {
-				requestError = errors.New(fmt.Sprint("Hash mismatch expected", status.block.Hash, "received", actualHash))
+				m.fmut.Unlock()
+				status.mutex.RUnlock()
+
+				m.pullBlock(status, false)
+
+				m.fmut.Lock()
+				status.mutex.RLock()
+				if m.isBlockStillNeeded(status) {
+					m.blockCaches[status.folder].PinNewBlock(status.block, status.data)
+				}
 			}
 		}
+		m.fmut.Unlock()
+		status.mutex.RUnlock()
+	}
+}
+
+// requires read locks or better on fmut and status.cv.L
+func (m *Model) isBlockStillNeeded(status *blockPullStatus) bool {
+	entry, found := m.treeCaches[status.folder].GetEntry(status.file)
+	if false == found {
+		return false
 	}
 
-	status.done = true
-	status.error = requestError
-	status.data = requestedData
+	for i, block := range entry.Blocks {
+		blockStart := int64(i * protocol.BlockSize)
+		if blockStart == status.offset && bytes.Equal(block.Hash, status.block.Hash) {
+			return true
+		}
+	}
 
-	status.cv.Broadcast()
+	return false
+}
+
+func (m *Model) pullBlock(status *blockPullStatus, addToCache bool) {
+	m.fmut.RLock()
+	m.pmut.RLock()
+	status.cv.L.Lock()
+
+	requestError := errors.New("can't get block from any devices")
+
+	if done != status.state {
+		devices, _ := m.treeCaches[status.folder].GetEntryDevices(status.file)
+		conns := make([]stmodel.Connection, 0)
+		for _, deviceIndex := range rand.Perm(len(devices)) {
+			deviceWithFile := devices[deviceIndex]
+			if conn, ok := m.protoConn[deviceWithFile]; ok {
+				conns = append(conns, conn)
+			}
+		}
+		m.fmut.RUnlock()
+		m.pmut.RUnlock()
+
+		if debug {
+			l.Debugln(status.comment, "block at offset", status.offset, "size", status.block.Size, "for", status.folder, status.file)
+		}
+
+		flags := uint32(0)
+		var requestedData []byte
+
+		for _, conn := range conns {
+			if debug {
+				l.Debugln("Trying to fetch block at offset", status.offset, "for", status.folder, status.file, "from device", conn.ID().String()[:5])
+			}
+
+			requestedData, requestError = conn.Request(status.folder, status.file, status.offset, int(status.block.Size), status.block.Hash, flags, []protocol.Option{})
+			if requestError == nil {
+				// check hash
+				actualHash := sha256.Sum256(requestedData)
+				if bytes.Equal(actualHash[:], status.block.Hash) {
+					break
+				} else {
+					requestError = errors.New(fmt.Sprint("Hash mismatch expected", status.block.Hash, "received", actualHash))
+				}
+			}
+		}
+
+		status.state = done
+		status.error = requestError
+		status.data = requestedData
+
+		status.cv.Broadcast()
+	} else {
+		m.fmut.RUnlock()
+		m.pmut.RUnlock()
+	}
+
 	status.cv.L.Unlock()
 
-	hash := b64.URLEncoding.EncodeToString(status.block.Hash)
 	m.fmut.Lock()
-	if requestError == nil {
+	status.mutex.RLock()
+	hash := b64.URLEncoding.EncodeToString(status.block.Hash)
+	if requestError == nil && addToCache {
 		m.blockCaches[status.folder].AddCachedFileData(status.block, status.data)
 	}
 	delete(m.pulls[status.folder], hash)
 	m.fmut.Unlock()
+	status.mutex.RUnlock()
 }
 
 func (m *Model) GetChildren(folder string, path string) []protocol.FileInfo {
@@ -414,6 +554,23 @@ func (m *Model) GetChildren(folder string, path string) []protocol.FileInfo {
 	return result
 }
 
+// required fmut read (or better) lock before entry
+func (m *Model) isFolderSharedWithDevice(folder string, deviceID protocol.DeviceID) bool {
+	for _, device := range m.folderDevices[folder] {
+		if device.Equals(deviceID) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) isFilePinned(folder string, filename string) bool {
+	pins := m.pinnedFiles[folder]
+	i := sort.SearchStrings(pins, filename)
+
+	return i < len(pins) && pins[i] == filename
+}
+
 // An index was received from the peer device
 func (m *Model) Index(deviceID protocol.DeviceID, folder string, files []protocol.FileInfo, flags uint32, options []protocol.Option) {
 	if debug {
@@ -422,6 +579,8 @@ func (m *Model) Index(deviceID protocol.DeviceID, folder string, files []protoco
 
 	m.fmut.Lock()
 	defer m.fmut.Unlock()
+	m.lmut.L.Lock()
+	defer m.lmut.L.Unlock()
 
 	if false == m.isFolderSharedWithDevice(folder, deviceID) {
 		if debug {
@@ -441,6 +600,8 @@ func (m *Model) IndexUpdate(deviceID protocol.DeviceID, folder string, files []p
 
 	m.fmut.Lock()
 	defer m.fmut.Unlock()
+	m.lmut.L.Lock()
+	defer m.lmut.L.Unlock()
 
 	if false == m.isFolderSharedWithDevice(folder, deviceID) {
 		if debug {
@@ -452,22 +613,19 @@ func (m *Model) IndexUpdate(deviceID protocol.DeviceID, folder string, files []p
 	m.updateIndex(deviceID, folder, files)
 }
 
-// required fmut read (or better) lock before entry
-func (m *Model) isFolderSharedWithDevice(folder string, deviceID protocol.DeviceID) bool {
-	for _, device := range m.folderDevices[folder] {
-		if device.Equals(deviceID) {
-			return true
-		}
-	}
-	return false
-}
-
-// requires write lock on model.fmut before entry
+// requires write locks on fmut and lmut before entry
 func (m *Model) updateIndex(deviceID protocol.DeviceID, folder string, files []protocol.FileInfo) {
 	treeCache, ok := m.treeCaches[folder]
 	if !ok {
 		if debug {
-			l.Debugln("folder", folder, "from", deviceID.String()[:5], "not configured, skipping")
+			l.Debugln("folder", folder, "from", deviceID.String()[:5], "tree not configured, skipping")
+		}
+		return
+	}
+	fbc, ok := m.blockCaches[folder]
+	if !ok {
+		if debug {
+			l.Debugln("folder", folder, "from", deviceID.String()[:5], "block not configured, skipping")
 		}
 		return
 	}
@@ -491,6 +649,12 @@ func (m *Model) updateIndex(deviceID protocol.DeviceID, folder string, files []p
 			}
 
 			treeCache.RemoveEntry(file.Name)
+
+			if m.isFilePinned(folder, file.Name) {
+				for _, block := range entry.Blocks {
+					fbc.UnpinBlock(block.Hash)
+				}
+			}
 		}
 
 		// add if necessary
@@ -521,8 +685,21 @@ func (m *Model) updateIndex(deviceID protocol.DeviceID, folder string, files []p
 			}
 
 			treeCache.AddEntry(file, deviceID)
+
+			// trigger pull on unsatisfied blocks for pinned files
+			if m.isFilePinned(folder, file.Name) {
+				for i, block := range file.Blocks {
+					if false == fbc.HasPinnedBlock(block.Hash) {
+						blockStart := int64(i * protocol.BlockSize)
+						status := m.getOrCreatePullStatus("Pin fetch", folder, file.Name, block, blockStart, queued)
+						m.pinnedList.PushBack(status)
+					}
+				}
+			}
 		}
 	}
+
+	m.lmut.Broadcast()
 }
 
 // A request was made by the peer device
@@ -549,6 +726,62 @@ func (m *Model) Close(deviceID protocol.DeviceID, err error) {
 	m.pmut.Lock()
 	delete(m.protoConn, deviceID)
 	m.pmut.Unlock()
+}
+
+func (m *Model) GetPinsStatusByFolder() map[string]string {
+	result := make(map[string]string)
+
+	m.fmut.RLock()
+	defer m.fmut.RUnlock()
+
+	for fldr, files := range m.pinnedFiles {
+		pendingBytes := uint64(0)
+		pendingFileCount := 0
+		pinnedBytes := uint64(0)
+		pinnedFileCount := 0
+		fbc := m.blockCaches[fldr]
+		tc := m.treeCaches[fldr]
+
+		for _, file := range files {
+			pending := false
+
+			fileEntry, _ := tc.GetEntry(file)
+			for _, block := range fileEntry.Blocks {
+				if false == fbc.HasPinnedBlock(block.Hash) {
+					pending = true
+					pendingBytes += uint64(block.Size)
+				} else {
+					pinnedBytes += uint64(block.Size)
+				}
+			}
+
+			if pending {
+				pendingFileCount += 1
+			} else {
+				pinnedFileCount += 1
+			}
+		}
+
+		if pendingFileCount > 0 {
+			pendingByteComment := human.Bytes(pendingBytes)
+			fileLabel := "files"
+			if pendingFileCount == 1 {
+				fileLabel = "file"
+			}
+			result[fldr] = fmt.Sprintf("%d %s (%s) pending", pendingFileCount, fileLabel, pendingByteComment)
+		} else {
+			if pinnedFileCount > 0 {
+				pinnedByteComment := human.Bytes(pinnedBytes)
+				fileLabel := "files"
+				if pinnedFileCount == 1 {
+					fileLabel = "file"
+				}
+				result[fldr] = fmt.Sprintf("%d %s (%s) pinned", pinnedFileCount, fileLabel, pinnedByteComment)
+			}
+		}
+	}
+
+	return result
 }
 
 type ConnectionInfo struct {

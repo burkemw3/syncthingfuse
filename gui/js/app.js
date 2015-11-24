@@ -1,5 +1,6 @@
 var stfuseApp = angular.module('syncthingfuse', [
     'syncthingfuse.core',
     'syncthingfuse.device',
-    'syncthingfuse.folder'
+    'syncthingfuse.folder',
+    'syncthingfuse.pins'
 ]);

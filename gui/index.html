@@ -3,6 +3,7 @@
     <title>SyncthingFUSE</title>
     <link rel="stylesheet" href="vendor/bootstrap-3.3.5/css/bootstrap.min.css" />
     <link rel="stylesheet" href="vendor/bootstrap-3.3.5/css/bootstrap-theme.min.css" />
+    <link rel="stylesheet" href="css/icon-addon.css" />
 </head>
 <body ng-controller="SyncthingFuseController">
     <div class="container">
@@ -29,19 +30,26 @@
                     <div class="panel-body">
                         <table class="table table-condensed">
                             <tr>
-                                <th>Maximum cache size</th>
+                                <th>Cache size</th>
                                 <td class="text-right">{{ folder.cacheSize }}</td>
                             </tr>
+                            <tr ng-if="pinnedFileStatus.hasOwnProperty(folder.id)">
+                                <th>Pinned files</th>
+                                <td class="text-right">{{ pinnedFileStatus[folder.id] }}</td>
+                            </tr>
                             <tr>
-                                <th>Shared With</th>
+                                <th>Shared with</th>
                                 <td class="text-right">{{sharesFolder(folder)}}</td>
                             </tr>
                         </table>
                     </div>
                     <div class="panel-footer">
                         <span class="pull-right">
+                          <button type="button" class="btn btn-sm btn-default" ng-click="editPinnedFiles(folder)">
+                            <span class="glyphicon glyphicon-pencil"></span>&nbsp;Edit Pinned Files
+                          </button>
                           <button type="button" class="btn btn-sm btn-default" ng-click="editFolder(folder)">
-                            <span class="glyphicon glyphicon-pencil"></span>&nbsp;Edit
+                            <span class="glyphicon glyphicon-pencil"></span>&nbsp;Edit Folder
                           </button>
                         </span>
                         <div class="clearfix"></div>
@@ -120,6 +128,7 @@
     <div edit-folder-modal></div>
     <div edit-device-modal></div>
     <div edit-settings-modal></div>
+    <div edit-pins-modal></div>
 
     <!-- prereqs -->
     <script src="vendor/angular-1.4.7/angular.min.js"></script>
@@ -135,6 +144,9 @@
     <!-- folder module -->
     <script src="js/folder/module.js"></script>
     <script src="js/folder/editFolderModalDirective.js"></script>
+    <!-- pins module -->
+    <script src="js/pins/module.js"></script>
+    <script src="js/pins/editPinsModalDirective.js"></script>
     <!-- ng app -->
     <script src="js/app.js"></script>
 </body>

@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"path"
+	"strings"
 
 	"github.com/boltdb/bolt"
 	"github.com/burkemw3/syncthingfuse/lib/config"
@@ -275,4 +276,34 @@ func (d *FileTreeCache) GetChildren(path string) []string {
 	}
 
 	return children
+}
+
+func (d *FileTreeCache) GetPathsMatchingPrefix(pathPrefix string) []string {
+	result := make([]string, 0)
+
+	prefixBase := path.Base(pathPrefix)
+	prefixDir := path.Dir(pathPrefix)
+
+	d.db.View(func(tx *bolt.Tx) error {
+		edb := tx.Bucket(d.folderBucketKey).Bucket(entryDevicesBucket)
+		edb.ForEach(func(key []byte, v []byte) error {
+			if len(result) > 13 {
+				return nil
+			}
+
+			candidatePath := string(key)
+			candidateDir := path.Dir(candidatePath)
+			if candidateDir == prefixDir {
+				candidateBase := path.Base(candidatePath)
+				if strings.HasPrefix(candidateBase, prefixBase) {
+					result = append(result, candidatePath)
+				}
+			}
+
+			return nil
+		})
+		return nil
+	})
+
+	return result
 }

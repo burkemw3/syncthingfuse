@@ -25,7 +25,10 @@ type FileBlockCache struct {
 	leastRecentlyUsed  []byte
 }
 
-var cachedFilesBucket = []byte("cachedFiles")
+var (
+	cachedFilesBucket  = []byte("cachedFiles")
+	pinnedBlocksBucket = []byte("pinnedBlocks")
+)
 
 type fileCacheEntry struct {
 	Hash     []byte
@@ -62,6 +65,11 @@ func NewFileBlockCache(cfg *config.Wrapper, db *bolt.DB, fldrCfg config.FolderCo
 			l.Warnln("error creating cached files bucket for folder", d.folder, err)
 			return err
 		}
+		pbb, err := b.CreateBucketIfNotExists(pinnedBlocksBucket)
+		if err != nil {
+			l.Warnln("error creating pinned block bucket for folder", d.folder, err)
+			return err
+		}
 
 		// update in-memory data cache
 		cfb.ForEach(func(k, v []byte) error {
@@ -76,13 +84,17 @@ func NewFileBlockCache(cfg *config.Wrapper, db *bolt.DB, fldrCfg config.FolderCo
 			if focus.Next == nil {
 				d.leastRecentlyUsed = focus.Hash
 			}
-			d.currentBytesStored += focus.Size
+
+			_, pinned := getEntryUnsafely(pbb, focus.Hash)
+			if false == pinned {
+				d.currentBytesStored += focus.Size
+			}
 
 			return nil
 		})
 
 		// evict, in case cache size has decreased
-		d.evictForSizeUnsafe(cfb, 0)
+		d.evictForSizeUnsafe(cfb, pbb, 0)
 
 		return nil
 	})
@@ -91,6 +103,101 @@ func NewFileBlockCache(cfg *config.Wrapper, db *bolt.DB, fldrCfg config.FolderCo
 	os.Mkdir(diskCacheFolder, 0744)
 
 	return d, nil
+}
+
+func (d *FileBlockCache) PinExistingBlock(block protocol.BlockInfo) {
+	if debug {
+		blockHashString := b64.URLEncoding.EncodeToString(block.Hash)
+		l.Debugln("Pinning existing block", blockHashString)
+	}
+
+	d.db.Update(func(tx *bolt.Tx) error {
+		pbb := tx.Bucket(d.folderBucketKey).Bucket(pinnedBlocksBucket)
+
+		entry := fileCacheEntry{
+			Hash: block.Hash,
+			Size: block.Size,
+		}
+		setEntryUnsafely(pbb, entry)
+
+		d.currentBytesStored -= block.Size
+
+		return nil
+	})
+}
+
+func (d *FileBlockCache) PinNewBlock(block protocol.BlockInfo, data []byte) {
+	if debug {
+		blockHashString := b64.URLEncoding.EncodeToString(block.Hash)
+		l.Debugln("Pinning new block", blockHashString)
+	}
+
+	d.db.Update(func(tx *bolt.Tx) error {
+		pbb := tx.Bucket(d.folderBucketKey).Bucket(pinnedBlocksBucket)
+		cfb := tx.Bucket(d.folderBucketKey).Bucket(cachedFilesBucket)
+
+		_, found := getEntryUnsafely(cfb, block.Hash)
+		if false == found {
+			// save to disk
+			diskCachePath := getDiskCachePath(d.cfg, d.folder, block.Hash)
+			err := ioutil.WriteFile(diskCachePath, data, 0644)
+			if err != nil {
+				l.Warnln("Error writing file", diskCachePath, "for folder", d.folder, "for hash", block.Hash, err)
+				return err // TODO error handle
+			}
+		} else {
+			d.currentBytesStored -= block.Size
+		}
+
+		entry := fileCacheEntry{
+			Hash: block.Hash,
+			Size: block.Size,
+		}
+		setEntryUnsafely(pbb, entry)
+
+		return nil
+	})
+}
+
+func (d *FileBlockCache) HasPinnedBlock(blockHash []byte) bool {
+	found := false
+
+	d.db.View(func(tx *bolt.Tx) error {
+		pbb := tx.Bucket(d.folderBucketKey).Bucket(pinnedBlocksBucket)
+
+		v := pbb.Get(blockHash)
+		if v != nil {
+			found = true
+		}
+
+		return nil
+	})
+
+	return found
+}
+
+func (d *FileBlockCache) UnpinBlock(blockHash []byte) {
+	d.db.Update(func(tx *bolt.Tx) error {
+		pbb := tx.Bucket(d.folderBucketKey).Bucket(pinnedBlocksBucket)
+		cfb := tx.Bucket(d.folderBucketKey).Bucket(cachedFilesBucket)
+
+		entry, pinned := getEntryUnsafely(pbb, blockHash)
+		if pinned {
+			_, found := getEntryUnsafely(cfb, blockHash)
+			if found {
+				d.currentBytesStored += entry.Size
+				d.evictForSizeUnsafe(cfb, pbb, 0)
+			} else {
+				// delete from disk
+				diskCachePath := getDiskCachePath(d.cfg, d.folder, blockHash)
+				os.Remove(diskCachePath)
+			}
+		}
+
+		pbb.Delete(blockHash)
+
+		return nil
+	})
 }
 
 func (d *FileBlockCache) HasCachedBlockData(blockHash []byte) bool {
@@ -117,11 +224,23 @@ func (d *FileBlockCache) GetCachedBlockData(blockHash []byte) ([]byte, bool) {
 
 	d.db.Update(func(tx *bolt.Tx) error {
 		cfb := tx.Bucket(d.folderBucketKey).Bucket(cachedFilesBucket)
+		pbb := tx.Bucket(d.folderBucketKey).Bucket(pinnedBlocksBucket)
 
 		/* get nodes */
 		// current
 		current, found = getEntryUnsafely(cfb, blockHash)
 		if false == found {
+			current, found = getEntryUnsafely(pbb, blockHash)
+			if found {
+				if debug {
+					blockHashString := b64.URLEncoding.EncodeToString(blockHash)
+					l.Debugln("pinned block hit", blockHashString)
+				}
+				d.addAsMruUnsafe(cfb, current.Hash, current.Size)
+
+				diskCachePath := getDiskCachePath(d.cfg, d.folder, blockHash)
+				data, _ = ioutil.ReadFile(diskCachePath) // TODO check error
+			}
 			return nil
 		}
 		found = true
@@ -190,30 +309,16 @@ func (d *FileBlockCache) GetCachedBlockData(blockHash []byte) ([]byte, bool) {
 func (d *FileBlockCache) AddCachedFileData(block protocol.BlockInfo, data []byte) {
 	d.db.Update(func(tx *bolt.Tx) error {
 		cfb := tx.Bucket(d.folderBucketKey).Bucket(cachedFilesBucket)
+		pbb := tx.Bucket(d.folderBucketKey).Bucket(pinnedBlocksBucket)
 
 		if debug {
 			l.Debugln("Putting block", b64.URLEncoding.EncodeToString(block.Hash), "with", block.Size, "bytes. max bytes", d.maximumBytesStored)
 		}
 
-		d.evictForSizeUnsafe(cfb, block.Size)
+		d.evictForSizeUnsafe(cfb, pbb, block.Size)
 
-		// add current node to front in db
-		current := fileCacheEntry{
-			Hash: block.Hash,
-			Next: d.mostRecentlyUsed,
-			Size: block.Size,
-		}
-		if d.mostRecentlyUsed != nil {
-			oldMru, _ := getEntryUnsafely(cfb, d.mostRecentlyUsed)
-			oldMru.Previous = current.Hash
-			setEntryUnsafely(cfb, oldMru)
-		}
-		setEntryUnsafely(cfb, current)
-		d.mostRecentlyUsed = current.Hash
-
-		if d.leastRecentlyUsed == nil {
-			d.leastRecentlyUsed = current.Hash
-		}
+		d.addAsMruUnsafe(cfb, block.Hash, block.Size)
+		d.currentBytesStored += block.Size
 
 		// write block data to disk
 		diskCachePath := getDiskCachePath(d.cfg, d.folder, block.Hash)
@@ -223,13 +328,30 @@ func (d *FileBlockCache) AddCachedFileData(block protocol.BlockInfo, data []byte
 			return err // TODO error handle
 		}
 
-		d.currentBytesStored += current.Size
-
 		return nil
 	})
 }
 
-func (d *FileBlockCache) evictForSizeUnsafe(cfb *bolt.Bucket, blockSize int32) {
+func (d *FileBlockCache) addAsMruUnsafe(cfb *bolt.Bucket, hash []byte, size int32) {
+	current := fileCacheEntry{
+		Hash: hash,
+		Next: d.mostRecentlyUsed,
+		Size: size,
+	}
+	if d.mostRecentlyUsed != nil {
+		oldMru, _ := getEntryUnsafely(cfb, d.mostRecentlyUsed)
+		oldMru.Previous = current.Hash
+		setEntryUnsafely(cfb, oldMru)
+	}
+	setEntryUnsafely(cfb, current)
+	d.mostRecentlyUsed = current.Hash
+
+	if d.leastRecentlyUsed == nil {
+		d.leastRecentlyUsed = current.Hash
+	}
+}
+
+func (d *FileBlockCache) evictForSizeUnsafe(cfb *bolt.Bucket, pbb *bolt.Bucket, blockSize int32) {
 	for d.currentBytesStored+blockSize > d.maximumBytesStored && d.leastRecentlyUsed != nil {
 		// evict LRU
 		victim, _ := getEntryUnsafely(cfb, d.leastRecentlyUsed)
@@ -246,9 +368,12 @@ func (d *FileBlockCache) evictForSizeUnsafe(cfb *bolt.Bucket, blockSize int32) {
 		// remove from db
 		cfb.Delete(victim.Hash)
 
-		// remove from disk
-		diskCachePath := getDiskCachePath(d.cfg, d.folder, victim.Hash)
-		os.Remove(diskCachePath)
+		// remove from disk if not pinned
+		_, pinned := getEntryUnsafely(pbb, victim.Hash)
+		if false == pinned {
+			diskCachePath := getDiskCachePath(d.cfg, d.folder, victim.Hash)
+			os.Remove(diskCachePath)
+		}
 
 		d.currentBytesStored -= victim.Size
 
@@ -285,4 +410,23 @@ func setEntryUnsafely(bucket *bolt.Bucket, entry fileCacheEntry) {
 	enc := gob.NewEncoder(&buf)
 	enc.Encode(entry)
 	bucket.Put(entry.Hash, buf.Bytes())
+}
+
+func (d *FileBlockCache) logCacheEntries() {
+	if debug {
+		d.db.View(func(tx *bolt.Tx) error {
+			cfb := tx.Bucket(d.folderBucketKey).Bucket(cachedFilesBucket)
+
+			hashes := make([]string, 0)
+			entry, found := getEntryUnsafely(cfb, d.mostRecentlyUsed)
+			for found {
+				hashes = append(hashes, string(entry.Hash))
+				entry, found = getEntryUnsafely(cfb, entry.Next)
+			}
+
+			l.Debugln("MRU to LRU", hashes)
+
+			return nil
+		})
+	}
 }

@@ -20,12 +20,12 @@
                     </div>
                     <div ng-show="!editingExisting">When adding a new folder, keep in mind that the Folder ID is used to tie folders together between devices. They are case sensitive and must match exactly between all devices.</div>
                     <div class="form-group" ng-class="{'has-error': folderEditor.cacheSize.$invalid && folderEditor.cacheSize.$dirty}">
-                        <label for="cacheSize">Maximum Cache Size</label>
+                        <label for="cacheSize">Cache Size</label>
                         <input name="cacheSize" id="cacheSize" class="form-control" type="text" ng-model="currentFolder.cacheSize" required humansize />
                         <p class="help-block">
                             <span ng-if="folderEditor.cacheSize.$valid || folderEditor.cacheSize.$pristine">Amount of space to dedicate to caching data on local disk for this folder.</span>
                             <span ng-if="folderEditor.cacheSize.$error.required && folderEditor.cacheSize.$dirty">The cache size cannot be unspecified.</span>
-                            <span ng-if="folderEditor.cacheSize.$error.humansize">The cache size must be some specification of bytes. Try something like 500 MiB.</span>
+                            <span ng-if="folderEditor.cacheSize.$error.humansize">The cache size must be some specification of bytes. Try something like 512 MiB.</span>
                         </p>
                     </div>
                     <div class="form-group">
