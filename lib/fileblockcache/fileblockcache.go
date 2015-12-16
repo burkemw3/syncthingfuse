@@ -93,6 +93,23 @@ func NewFileBlockCache(cfg *config.Wrapper, db *bolt.DB, fldrCfg config.FolderCo
 	return d, nil
 }
 
+func (d *FileBlockCache) HasCachedBlockData(blockHash []byte) bool {
+	found := false
+
+	d.db.View(func(tx *bolt.Tx) error {
+		cfb := tx.Bucket(d.folderBucketKey).Bucket(cachedFilesBucket)
+
+		v := cfb.Get(blockHash)
+		if v != nil {
+			found = true
+		}
+
+		return nil
+	})
+
+	return found
+}
+
 func (d *FileBlockCache) GetCachedBlockData(blockHash []byte) ([]byte, bool) {
 	found := false
 	var current, previous, next fileCacheEntry

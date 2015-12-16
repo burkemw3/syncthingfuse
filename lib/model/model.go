@@ -3,10 +3,13 @@ package model
 import (
 	"bytes"
 	"crypto/sha256"
+	b64 "encoding/base64"
 	"errors"
 	"fmt"
 	"math/rand"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/boltdb/bolt"
 	"github.com/burkemw3/syncthingfuse/lib/config"
@@ -15,7 +18,7 @@ import (
 	"github.com/cznic/mathutil"
 	stmodel "github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
-	"github.com/syncthing/syncthing/lib/sync"
+	stsync "github.com/syncthing/syncthing/lib/sync"
 )
 
 type Model struct {
@@ -23,12 +26,13 @@ type Model struct {
 	db  *bolt.DB
 
 	protoConn map[protocol.DeviceID]stmodel.Connection
-	pmut      sync.RWMutex // protects protoConn and rawConn. must not be acquired before fmut
+	pmut      stsync.RWMutex // protects protoConn and rawConn. must not be acquired before fmut
 
 	blockCaches   map[string]*fileblockcache.FileBlockCache
 	treeCaches    map[string]*filetreecache.FileTreeCache
 	folderDevices map[string][]protocol.DeviceID
-	fmut          sync.RWMutex // protects file information. must not be acquired after pmut
+	pulls         map[string]map[string]*blockPullStatus
+	fmut          stsync.RWMutex // protects file information. must not be acquired after pmut
 }
 
 func NewModel(cfg *config.Wrapper, db *bolt.DB) *Model {
@@ -37,12 +41,13 @@ func NewModel(cfg *config.Wrapper, db *bolt.DB) *Model {
 		db:  db,
 
 		protoConn: make(map[protocol.DeviceID]stmodel.Connection),
-		pmut:      sync.NewRWMutex(),
+		pmut:      stsync.NewRWMutex(),
 
 		blockCaches:   make(map[string]*fileblockcache.FileBlockCache),
 		treeCaches:    make(map[string]*filetreecache.FileTreeCache),
 		folderDevices: make(map[string][]protocol.DeviceID),
-		fmut:          sync.NewRWMutex(),
+		pulls:         make(map[string]map[string]*blockPullStatus),
+		fmut:          stsync.NewRWMutex(),
 	}
 
 	for _, folderCfg := range m.cfg.Folders() {
@@ -59,6 +64,8 @@ func NewModel(cfg *config.Wrapper, db *bolt.DB) *Model {
 		for i, device := range folderCfg.Devices {
 			m.folderDevices[folder][i] = device.DeviceID
 		}
+
+		m.pulls[folder] = make(map[string]*blockPullStatus)
 	}
 
 	m.removeUnconfiguredFolders()
@@ -171,15 +178,15 @@ func (m *Model) GetEntry(folder string, path string) (protocol.FileInfo, bool) {
 }
 
 func (m *Model) GetFileData(folder string, filepath string, readStart int64, readSize int) ([]byte, error) {
-	if debug {
-		l.Debugln("Read for", folder, filepath, readStart, readSize)
-	}
+	start := time.Now()
 
-	// can probably make lock acquisition less contentious here
 	m.fmut.Lock()
-	defer m.fmut.Unlock()
+	if debug {
+		flet := time.Now()
+		dur := flet.Sub(start).Seconds()
+		l.Debugln("Read for", folder, filepath, readStart, readSize, "Lock took", dur)
+	}
 	m.pmut.RLock()
-	defer m.pmut.RUnlock()
 
 	entry, found := m.treeCaches[folder].GetEntry(filepath)
 	if false == found {
@@ -189,100 +196,174 @@ func (m *Model) GetFileData(folder string, filepath string, readStart int64, rea
 
 	data := make([]byte, readSize)
 	readEnd := readStart + int64(readSize)
-
-	blocksExpected := 0
-	messages := make(chan bool)
+	pendingBlocks := make([]pendingBlockRead, 0)
+	fbc := m.blockCaches[folder]
 
 	// create workers for pulling
 	for i, block := range entry.Blocks {
 		blockStart := int64(i * protocol.BlockSize)
 		blockEnd := blockStart + int64(block.Size)
 
-		if blockEnd > readStart && blockStart < readEnd { // need this block
-			blocksExpected++
-			go m.copyBlockToData(folder, filepath, readStart, readEnd, blockStart, blockEnd, block, data, messages)
+		if blockEnd > readStart {
+			if blockStart < readEnd {
+				// need this block
+				blockData, found := fbc.GetCachedBlockData(block.Hash)
+				if found {
+					copyBlockData(blockData, readStart, blockStart, readEnd, blockEnd, data)
+				} else {
+					// pull block
+					pendingBlock := pendingBlockRead{
+						readStart:       readStart,
+						blockStart:      blockStart,
+						readEnd:         readEnd,
+						blockEnd:        blockEnd,
+						blockPullStatus: m.getOrCreatePullStatus("Fetch", folder, filepath, block, blockStart),
+					}
+					pendingBlocks = append(pendingBlocks, pendingBlock)
+				}
+			} else if blockStart < readEnd+protocol.BlockSize && false == fbc.HasCachedBlockData(block.Hash) {
+				// prefetch this block
+				m.getOrCreatePullStatus("Prefetch", folder, filepath, block, blockStart)
+			}
 		}
 	}
 
-	// wait for workers to finish
-	for i := 0; i < blocksExpected; i++ {
-		result := <-messages
-		if !result {
-			return []byte(""), errors.New("a required block was not successfully retrieved")
+	m.fmut.Unlock()
+	m.pmut.RUnlock()
+
+	// wait for needed blocks
+	for _, pendingBlock := range pendingBlocks {
+		pendingBlock.blockPullStatus.cv.L.Lock()
+		for false == pendingBlock.blockPullStatus.done {
+			pendingBlock.blockPullStatus.cv.Wait()
 		}
+		if pendingBlock.blockPullStatus.error != nil {
+			return []byte(""), pendingBlock.blockPullStatus.error
+		}
+		copyBlockData(pendingBlock.blockPullStatus.data, pendingBlock.readStart, pendingBlock.blockStart, pendingBlock.readEnd, pendingBlock.blockEnd, data)
+		pendingBlock.blockPullStatus.cv.L.Unlock()
+	}
+
+	if debug {
+		end := time.Now()
+		fullDur := end.Sub(start).Seconds()
+		l.Debugln("Read for", folder, filepath, readStart, readSize, "completed", fullDur)
 	}
 
 	return data, nil
 }
 
-// requires fmut and pmut read locks (or better) before entry
-func (m *Model) copyBlockToData(folder string, filepath string, readStart int64, readEnd int64, blockStart int64, blockEnd int64, block protocol.BlockInfo, data []byte, messages chan bool) {
-	blockData, blockFound := m.blockCaches[folder].GetCachedBlockData(block.Hash)
-
-	if false == blockFound {
-		requestedData, requestError := m.pullBlock(folder, filepath, blockStart, block)
-
-		if requestError != nil {
-			l.Warnln("Can't get block at offset", blockStart, "from any devices for", folder, filepath, requestError)
-			messages <- false
-			return
-		}
-
-		blockData = requestedData
-
-		// Add block to cache
-		m.blockCaches[folder].AddCachedFileData(block, blockData)
-	} else if debug {
-		l.Debugln("Found block at offset", blockStart, "for", folder, filepath)
-	}
-
+func copyBlockData(blockData []byte, readStart int64, blockStart int64, readEnd int64, blockEnd int64, data []byte) {
 	for j := mathutil.MaxInt64(readStart, blockStart); j < readEnd && j < blockEnd; j++ {
 		outputItr := j - readStart
 		inputItr := j - blockStart
 
 		data[outputItr] = blockData[inputItr]
 	}
-
-	messages <- true
 }
 
-// requires fmut and pmut read locks (or better) before entry
-func (m *Model) pullBlock(folder string, filepath string, offset int64, block protocol.BlockInfo) ([]byte, error) {
-	if debug {
-		l.Debugln("Fetching block at offset", offset, "size", block.Size, "for", folder, filepath)
+type pendingBlockRead struct {
+	readStart       int64
+	blockStart      int64
+	readEnd         int64
+	blockEnd        int64
+	blockPullStatus *blockPullStatus
+}
+
+type blockPullStatus struct {
+	conns   []stmodel.Connection
+	comment string
+	folder  string
+	file    string
+	block   protocol.BlockInfo
+	offset  int64
+	done    bool
+	data    []byte
+	error   error
+	cv      *sync.Cond
+}
+
+// requires fmut write lock and pmut read lock (or better) before entry
+func (m *Model) getOrCreatePullStatus(comment string, folder string, file string, block protocol.BlockInfo, offset int64) *blockPullStatus {
+	hash := b64.URLEncoding.EncodeToString(block.Hash)
+
+	pullStatus, ok := m.pulls[folder][hash]
+	if ok {
+		return pullStatus
 	}
 
-	flags := uint32(0)
-
-	// Get block from a device
-	devices, _ := m.treeCaches[folder].GetEntryDevices(filepath)
+	devices, _ := m.treeCaches[folder].GetEntryDevices(file)
+	conns := make([]stmodel.Connection, 0)
 	for _, deviceIndex := range rand.Perm(len(devices)) {
 		deviceWithFile := devices[deviceIndex]
 		conn, ok := m.protoConn[deviceWithFile]
 		if !ok { // not connected to device
 			continue
 		}
+		conns = append(conns, conn)
+	}
 
+	var mutex sync.Mutex
+	pullStatus = &blockPullStatus{
+		conns:   conns,
+		comment: comment,
+		folder:  folder,
+		file:    file,
+		block:   block,
+		offset:  offset,
+		cv:      sync.NewCond(&mutex),
+	}
+
+	m.pulls[folder][hash] = pullStatus
+
+	go m.pullBlock(pullStatus)
+
+	return pullStatus
+}
+
+func (m *Model) pullBlock(status *blockPullStatus) {
+	status.cv.L.Lock()
+
+	if debug {
+		l.Debugln(status.comment, "block at offset", status.offset, "size", status.block.Size, "for", status.folder, status.file)
+	}
+
+	flags := uint32(0)
+
+	var requestedData []byte
+	requestError := errors.New("can't get block from any devices")
+
+	for _, conn := range status.conns {
 		if debug {
-			l.Debugln("Trying to fetch block at offset", offset, "for", folder, filepath, "from device", deviceWithFile)
+			l.Debugln("Trying to fetch block at offset", status.offset, "for", status.folder, status.file, "from device", conn.ID().String()[:5])
 		}
 
-		requestedData, requestError := conn.Request(folder, filepath, offset, int(block.Size), block.Hash, flags, []protocol.Option{})
+		requestedData, requestError = conn.Request(status.folder, status.file, status.offset, int(status.block.Size), status.block.Hash, flags, []protocol.Option{})
 		if requestError == nil {
 			// check hash
 			actualHash := sha256.Sum256(requestedData)
-			if bytes.Equal(actualHash[:], block.Hash) {
-				return requestedData, nil
-			} else if debug {
-				l.Debugln("Hash mismatch expected", block.Hash, "received", actualHash)
+			if bytes.Equal(actualHash[:], status.block.Hash) {
+				break
+			} else {
+				requestError = errors.New(fmt.Sprint("Hash mismatch expected", status.block.Hash, "received", actualHash))
 			}
-		}
-		if debug {
-			l.Debugln("Error fetching block at offset", offset, "from device", deviceWithFile, ":", requestError)
 		}
 	}
 
-	return []byte(""), errors.New("can't get block from any devices")
+	status.done = true
+	status.error = requestError
+	status.data = requestedData
+
+	status.cv.Broadcast()
+	status.cv.L.Unlock()
+
+	hash := b64.URLEncoding.EncodeToString(status.block.Hash)
+	m.fmut.Lock()
+	if requestError == nil {
+		m.blockCaches[status.folder].AddCachedFileData(status.block, status.data)
+	}
+	delete(m.pulls[status.folder], hash)
+	m.fmut.Unlock()
 }
 
 func (m *Model) GetChildren(folder string, path string) []protocol.FileInfo {
@@ -304,7 +385,7 @@ func (m *Model) GetChildren(folder string, path string) []protocol.FileInfo {
 // An index was received from the peer device
 func (m *Model) Index(deviceID protocol.DeviceID, folder string, files []protocol.FileInfo, flags uint32, options []protocol.Option) {
 	if debug {
-		l.Debugln("model: receiving index from device", deviceID, "for folder", folder)
+		l.Debugln("model: receiving index from device", deviceID.String()[:5], "for folder", folder)
 	}
 
 	m.fmut.Lock()
@@ -312,7 +393,7 @@ func (m *Model) Index(deviceID protocol.DeviceID, folder string, files []protoco
 
 	if false == m.isFolderSharedWithDevice(folder, deviceID) {
 		if debug {
-			l.Debugln("model:", deviceID, "not shared with folder", folder, "so ignoring")
+			l.Debugln("model:", deviceID.String()[:5], "not shared with folder", folder, "so ignoring")
 		}
 		return
 	}
@@ -323,7 +404,7 @@ func (m *Model) Index(deviceID protocol.DeviceID, folder string, files []protoco
 // An index update was received from the peer device
 func (m *Model) IndexUpdate(deviceID protocol.DeviceID, folder string, files []protocol.FileInfo, flags uint32, options []protocol.Option) {
 	if debug {
-		l.Debugln("model: receiving index from device", deviceID, "for folder", folder)
+		l.Debugln("model: receiving index update from device", deviceID.String()[:5], "for folder", folder)
 	}
 
 	m.fmut.Lock()
@@ -331,7 +412,7 @@ func (m *Model) IndexUpdate(deviceID protocol.DeviceID, folder string, files []p
 
 	if false == m.isFolderSharedWithDevice(folder, deviceID) {
 		if debug {
-			l.Debugln("model:", deviceID, "not shared with folder", folder, "so ignoring")
+			l.Debugln("model:", deviceID.String()[:5], "not shared with folder", folder, "so ignoring")
 		}
 		return
 	}
@@ -354,7 +435,7 @@ func (m *Model) updateIndex(deviceID protocol.DeviceID, folder string, files []p
 	treeCache, ok := m.treeCaches[folder]
 	if !ok {
 		if debug {
-			l.Debugln("folder", folder, "from", deviceID.String(), "not configured, skipping")
+			l.Debugln("folder", folder, "from", deviceID.String()[:5], "not configured, skipping")
 		}
 		return
 	}
@@ -368,13 +449,13 @@ func (m *Model) updateIndex(deviceID protocol.DeviceID, folder string, files []p
 		}
 
 		if debug {
-			l.Debugln("updating entry for", file.Name, "from", deviceID.Short(), existsInLocalModel, globalToLocal)
+			l.Debugln("updating entry for", file.Name, "from", deviceID.String()[:5], existsInLocalModel, globalToLocal)
 		}
 
 		// remove if necessary
 		if existsInLocalModel && (globalToLocal == protocol.Greater || (file.Version.Concurrent(entry.Version) && file.WinsConflict(entry))) {
 			if debug {
-				l.Debugln("remove entry for", file.Name, "from", deviceID.Short())
+				l.Debugln("remove entry for", file.Name, "from", deviceID.String()[:5])
 			}
 
 			treeCache.RemoveEntry(file.Name)
@@ -384,27 +465,27 @@ func (m *Model) updateIndex(deviceID protocol.DeviceID, folder string, files []p
 		if !existsInLocalModel || (globalToLocal == protocol.Greater || (file.Version.Concurrent(entry.Version) && file.WinsConflict(entry))) || (globalToLocal == protocol.Equal) {
 			if file.IsDeleted() {
 				if debug {
-					l.Debugln("peer", deviceID.Short(), "has deleted file, doing nothing", file.Name)
+					l.Debugln("peer", deviceID.String()[:5], "has deleted file, doing nothing", file.Name)
 				}
 				continue
 			}
 			if file.IsInvalid() {
 				if debug {
-					l.Debugln("peer", deviceID.Short(), "has invalid file, doing nothing", file.Name)
+					l.Debugln("peer", deviceID.String()[:5], "has invalid file, doing nothing", file.Name)
 				}
 				continue
 			}
 			if file.IsSymlink() {
 				if debug {
-					l.Debugln("peer", deviceID.Short(), "has symlink, doing nothing", file.Name)
+					l.Debugln("peer", deviceID.String()[:5], "has symlink, doing nothing", file.Name)
 				}
 				continue
 			}
 
 			if debug && file.IsDirectory() {
-				l.Debugln("add directory", file.Name, "from", deviceID.Short())
+				l.Debugln("add directory", file.Name, "from", deviceID.String()[:5])
 			} else if debug {
-				l.Debugln("add file", file.Name, "from", deviceID.Short())
+				l.Debugln("add file", file.Name, "from", deviceID.String()[:5])
 			}
 
 			treeCache.AddEntry(file, deviceID)

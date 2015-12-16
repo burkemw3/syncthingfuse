@@ -271,7 +271,7 @@ func assertEntry(t *testing.T, model *Model, folder string, name string, flags u
 
 func setup(deviceID protocol.DeviceID, dir string, peers ...protocol.DeviceID) (*config.Wrapper, *bolt.DB, string) {
 	configFile, _ := ioutil.TempFile(dir, "config")
-	realCfg := config.New(deviceID)
+	realCfg := config.New(deviceID, deviceID.String()[:5])
 	cfg := config.Wrap(configFile.Name(), realCfg)
 
 	databasePath := path.Join(path.Dir(cfg.ConfigPath()), "boltdb")
