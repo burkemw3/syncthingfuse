@@ -14,7 +14,7 @@ _SyncthingFUSE is currently an alpha release. Since it's currently read-only, it
 Getting Started
 ===============
 
-SyncthingFUSE follows many patterns of Syncthing, so you should be familiar with it before starting. Additionally, SyncthingFUSE requires at least one device running running Syncthing.
+SyncthingFUSE follows many patterns of Syncthing, so you should be familiar with it before starting. Additionally, SyncthingFUSE requires at least one device running Syncthing.
 
 To get started, grab a [release](https://github.com/burkemw3/syncthingfuse/releases) for your operating system and unpack it. When you run the `syncthingfuse` binary, it will set itself up with some defaults and start.
 
