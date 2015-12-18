@@ -80,12 +80,19 @@
                 </div>
                 <h3>Devices</h3>
                 <div class="panel panel-default" ng-repeat="device in otherDevices()">
-                    <div class="panel-heading"><h3 class="panel-title"><span class="glyphicon glyphicon-cloud"></span> {{ device.name }}</h3></div>
+                    <div class="panel-heading">
+                        <h3 class="panel-title">
+                            <span class="glyphicon glyphicon-cloud"></span> {{ device.name }}
+                            <span ng-if="isDeviceConnected(device.deviceID)" class="text-primary pull-right">Connected</span>
+                            <span ng-if="false === isDeviceConnected(device.deviceID)" class="text-info pull-right">Disconnected</span>
+                        </h3>
+                    </div>
                     <div class="panel-body">
                         <table class="table table-condensed">
                             <tr>
                                 <th>Address</th>
-                                <td class="text-right">{{ device.addresses.join(", ") }}</td>
+                                <td class="text-right" ng-if="isDeviceConnected(device.deviceID)">{{ connections[device.deviceID].Address }}</td>
+                                <td class="text-right" ng-if="false === isDeviceConnected(device.deviceID)">{{ device.addresses.join(", ") }}</td>
                             </tr>
                         </table>
                     </div>

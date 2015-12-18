@@ -1,6 +1,30 @@
 angular.module('syncthingfuse.core').controller('SyncthingFuseController', function ($scope, $http) {
     $scope.config = { devices: [] };
+    $scope.connections = {};
     $scope.configInSync = true;
+
+    function initController() {
+        setInterval($scope.refresh, 10000);
+    }
+
+    $scope.refresh = function() {
+        $http.get('/api/system/connections').then(
+            function(response) {
+                var newConnections = {};
+                response.data.forEach(function(connection) {
+                    newConnections[connection.DeviceID] = connection
+                });
+                $scope.connections = newConnections;
+            },
+            function() { /* TODO handle error */ });
+    };
+
+    $scope.isDeviceConnected = function(deviceID) {
+        if ($scope.connections.hasOwnProperty(deviceID)) {
+            return true;
+        }
+        return false;
+    };
 
     $http.get('/api/system/config').success(function(data) {
         $scope.config = data;
@@ -261,4 +285,6 @@ angular.module('syncthingfuse.core').controller('SyncthingFuseController', funct
                 // TODO show error message
             });
     };
+
+    initController();
 });

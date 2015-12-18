@@ -124,7 +124,7 @@ func main() {
 	mainSvc.Add(connectionSvc)
 
 	if cfg.Raw().GUI.Enabled {
-		api, err := newAPISvc(myID, cfg)
+		api, err := newAPISvc(myID, cfg, m)
 		if err != nil {
 			l.Fatalln("Cannot start GUI:", err)
 		}

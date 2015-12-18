@@ -550,3 +550,24 @@ func (m *Model) Close(deviceID protocol.DeviceID, err error) {
 	delete(m.protoConn, deviceID)
 	m.pmut.Unlock()
 }
+
+type ConnectionInfo struct {
+	DeviceID string
+	Address  string
+}
+
+func (m *Model) GetConnections() []ConnectionInfo {
+	m.pmut.RLock()
+	defer m.pmut.RUnlock()
+
+	connections := make([]ConnectionInfo, 0)
+	for _, conn := range m.protoConn {
+		ci := ConnectionInfo{
+			DeviceID: conn.ID().String(),
+			Address:  conn.RemoteAddr().String(),
+		}
+		connections = append(connections, ci)
+	}
+
+	return connections
+}
