@@ -52,6 +52,44 @@ func (w *Wrapper) Raw() Configuration {
 	return w.cfg
 }
 
+func (w *Wrapper) Devices() map[protocol.DeviceID]stconfig.DeviceConfiguration {
+	w.mut.Lock()
+	defer w.mut.Unlock()
+
+	deviceMap := make(map[protocol.DeviceID]stconfig.DeviceConfiguration, len(w.cfg.Devices))
+	for _, devCfg := range w.cfg.Devices {
+		deviceMap[devCfg.DeviceID] = devCfg
+	}
+
+	return deviceMap
+}
+
+func (w *Wrapper) SetDevice(devCfg stconfig.DeviceConfiguration) {
+	w.mut.Lock()
+	defer w.mut.Unlock()
+
+	replaced := false
+	for i := range w.cfg.Devices {
+		if w.cfg.Devices[i].DeviceID == devCfg.DeviceID {
+			w.cfg.Devices[i] = devCfg
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		w.cfg.Devices = append(w.cfg.Devices, devCfg)
+	}
+}
+
+func (w *Wrapper) MyDeviceConfiguration() stconfig.DeviceConfiguration {
+	for _, d := range w.cfg.Devices {
+		if d.DeviceID.String() == w.cfg.MyID {
+			return d
+		}
+	}
+	return stconfig.DeviceConfiguration{}
+}
+
 // Folders returns a map of folders. Folder structures should not be changed,
 // other than for the purpose of updating via SetFolder().
 func (w *Wrapper) Folders() map[string]FolderConfiguration {

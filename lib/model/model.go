@@ -114,7 +114,10 @@ func (m *Model) removeUnconfiguredFolders() {
 func (m *Model) AddConnection(conn stmodel.Connection) {
 	deviceID := conn.ID()
 
+	m.fmut.RLock()
+	defer m.fmut.RUnlock()
 	m.pmut.Lock()
+	defer m.pmut.Unlock()
 
 	if _, ok := m.protoConn[deviceID]; ok {
 		panic("add existing device")
@@ -123,20 +126,49 @@ func (m *Model) AddConnection(conn stmodel.Connection) {
 
 	conn.Start()
 
-	/* send cluster config */ // TODO stop hard coding this, get it from model, like syncthing?
+	/* build and send cluster config */
 	cm := protocol.ClusterConfigMessage{
-		// TODO set these correctly
-		ClientName:    "Syncthing-FUSE",
+		DeviceName:    m.cfg.MyDeviceConfiguration().Name,
+		ClientName:    "SyncthingFUSE",
 		ClientVersion: "0.0.0",
 		Options:       []protocol.Option{},
 	}
-	cr := protocol.Folder{
-		ID: "default",
-	}
-	cm.Folders = append(cm.Folders, cr)
-	conn.ClusterConfig(cm)
 
-	m.pmut.Unlock()
+	for folderName, devices := range m.folderDevices {
+		found := false
+		for _, device := range devices {
+			if device == deviceID {
+				found = true
+				break
+			}
+		}
+		if false == found {
+			continue
+		}
+
+		cr := protocol.Folder{
+			ID: folderName,
+		}
+		for _, device := range devices {
+			// DeviceID is a value type, but with an underlying array. Copy it
+			// so we don't grab aliases to the same array later on in device[:]
+			device := device
+			deviceCfg := m.cfg.Devices()[device]
+			cn := protocol.Device{
+				ID:          device[:],
+				Name:        deviceCfg.Name,
+				Addresses:   deviceCfg.Addresses,
+				Compression: uint32(deviceCfg.Compression),
+				CertName:    deviceCfg.CertName,
+				Flags:       protocol.FlagShareTrusted,
+			}
+			cr.Devices = append(cr.Devices, cn)
+		}
+
+		cm.Folders = append(cm.Folders, cr)
+	}
+
+	conn.ClusterConfig(cm)
 }
 
 func (m *Model) ConnectedTo(deviceID protocol.DeviceID) bool {
@@ -500,7 +532,16 @@ func (m *Model) Request(deviceID protocol.DeviceID, folder string, name string, 
 
 // A cluster configuration message was received
 func (m *Model) ClusterConfig(deviceID protocol.DeviceID, config protocol.ClusterConfigMessage) {
-	fmt.Println("model: receiving cluster config from device ", deviceID)
+	if debug {
+		l.Debugln("model: receiving cluster config from device", deviceID.String()[:5])
+	}
+
+	device, ok := m.cfg.Devices()[deviceID]
+	if ok && device.Name == "" {
+		device.Name = config.DeviceName
+		m.cfg.SetDevice(device)
+		m.cfg.Save()
+	}
 }
 
 // The peer device closed the connection
