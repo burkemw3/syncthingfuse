@@ -9,14 +9,14 @@ SyncthingFUSE is available on OS X and Linux.
 
 SynthingFUSE is currently read-only. You can browse and view files but cannot write or modify them. (Supporting writes appears possible, but no one has put in the development effort, yet.)
 
-_SyncthingFUSE is currently an alpha release. Since it's currently read-only, it poses a low threat to damaging your computer or Syncthing folders. There is some risk, however, and you assume all of that yourself._
+_SyncthingFUSE is currently an early release. Since it's currently read-only, it poses a low threat to damaging your computer or Syncthing folders. There is some risk, however, and you assume all of that yourself._
 
 Getting Started
 ===============
 
 SyncthingFUSE follows many patterns of Syncthing, so you should be familiar with it before starting. Additionally, SyncthingFUSE requires at least one device running Syncthing.
 
-To get started, grab a [release](https://github.com/burkemw3/syncthingfuse/releases) for your operating system and unpack it. When you run the `syncthingfuse` binary, it will set itself up with some defaults and start.
+To get started, grab a [release](https://github.com/burkemw3/syncthingfuse/releases) for your operating system and run it. When you start the `syncthingfuse` binary, it will set itself up with some defaults and start.
 
 By default, a configuration UI is available in a browser at `http://127.0.0.1:8385` (If the default port is taken, check the output of the startup for the line `API listening on`). Upon visiting, you will see a UI similar (albeit uglier) to Syncthing. On the left are folders that are configured, and on the right are devices.
 
