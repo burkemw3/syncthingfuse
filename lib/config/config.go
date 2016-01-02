@@ -111,6 +111,10 @@ func (cfg *Configuration) WriteXML(w io.Writer) error {
 func (cfg *Configuration) prepare() {
 	fillNilSlices(cfg)
 	fillNilSlices(&(cfg.Options))
+
+	if nil == cfg.Folders {
+		cfg.Folders = make([]FolderConfiguration, 0)
+	}
 }
 
 func setDefaults(data interface{}) error {
