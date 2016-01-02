@@ -293,6 +293,8 @@ func (m *Model) GetFileData(folder string, filepath string, readStart int64, rea
 	m.pmut.RLock()
 	defer m.pmut.RUnlock()
 
+	var wg sync.WaitGroup
+
 	// create workers for pulling
 	for i, block := range entry.Blocks {
 		blockStart := int64(i * protocol.BlockSize)
@@ -301,9 +303,13 @@ func (m *Model) GetFileData(folder string, filepath string, readStart int64, rea
 		if blockEnd > readStart {
 			if blockStart < readEnd {
 				// need this block
-				blockData, found := fbc.GetCachedBlockData(block.Hash)
-				if found {
-					copyBlockData(blockData, readStart, blockStart, readEnd, blockEnd, data)
+				if fbc.HasCachedBlockData(block.Hash) || fbc.HasPinnedBlock(block.Hash) {
+					wg.Add(1)
+					go func(b protocol.BlockInfo, rs int64, bs int64, re int64, be int64) {
+						blockData, _ := fbc.GetCachedBlockData(b.Hash)
+						copyBlockData(blockData, rs, bs, re, be, data)
+						wg.Done()
+					}(block, readStart, blockStart, readEnd, blockEnd)
 				} else {
 					// pull block
 					pendingBlock := pendingBlockRead{
@@ -323,6 +329,8 @@ func (m *Model) GetFileData(folder string, filepath string, readStart int64, rea
 			}
 		}
 	}
+
+	wg.Wait()
 
 	m.fmut.Unlock()
 	m.pmut.RUnlock()

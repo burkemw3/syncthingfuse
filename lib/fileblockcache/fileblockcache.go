@@ -282,7 +282,10 @@ func (d *FileBlockCache) GetCachedBlockData(blockHash []byte) ([]byte, bool) {
 			setEntryUnsafely(cfb, current)
 			d.mostRecentlyUsed = current.Hash
 		}
+		return nil
+	})
 
+	if found {
 		/* get cached data */
 		diskCachePath := getDiskCachePath(d.cfg, d.folder, blockHash)
 		data, _ = ioutil.ReadFile(diskCachePath) // TODO check error
@@ -291,10 +294,7 @@ func (d *FileBlockCache) GetCachedBlockData(blockHash []byte) ([]byte, bool) {
 			blockHashString := b64.URLEncoding.EncodeToString(blockHash)
 			l.Debugln("file cache hit for block", blockHashString, "at", diskCachePath)
 		}
-		return nil
-	})
 
-	if found {
 		return data, true
 	}
 
