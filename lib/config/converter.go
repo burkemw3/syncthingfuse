@@ -23,7 +23,6 @@ func (w *Wrapper) AsStCfg(myID protocol.DeviceID) *stconfig.Wrapper {
 	cfg.Options.GlobalAnnEnabled = w.Raw().Options.GlobalAnnounceEnabled
 	cfg.Options.GlobalAnnServers = w.Raw().Options.GlobalAnnounceServers
 	cfg.Options.RelaysEnabled = w.Raw().Options.RelaysEnabled
-	cfg.Options.RelayWithoutGlobalAnn = w.Raw().Options.RelayWithoutGlobalAnnounce
 	cfg.Options.RelayServers = w.Raw().Options.RelayServers
 	cfg.Options.RelayReconnectIntervalM = w.Raw().Options.RelayReconnectIntervalM
 

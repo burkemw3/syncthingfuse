@@ -120,7 +120,7 @@ func main() {
 
 	lans, _ := osutil.GetLans()
 
-	connectionSvc := connections.NewConnectionSvc(cfg.AsStCfg(myID), myID, m, tlsCfg, cachedDiscovery, relaySvc, bepProtocolName, tlsDefaultCommonName, lans)
+	connectionSvc := connections.NewConnectionService(cfg.AsStCfg(myID), myID, m, tlsCfg, cachedDiscovery, relaySvc, bepProtocolName, tlsDefaultCommonName, lans)
 	mainSvc.Add(connectionSvc)
 
 	if cfg.Raw().GUI.Enabled {
@@ -154,12 +154,12 @@ const (
 	globalDiscoveryPriority
 )
 
-func setupConnections(cfg *stconfig.Wrapper, tlsCfg *tls.Config, cert tls.Certificate, mainSvc *suture.Supervisor) (*discover.CachingMux, *relay.Svc) {
+func setupConnections(cfg *stconfig.Wrapper, tlsCfg *tls.Config, cert tls.Certificate, mainSvc *suture.Supervisor) (*discover.CachingMux, *relay.Service) {
 	opts := cfg.Raw().Options
 
-	var relaySvc *relay.Svc
-	if opts.RelaysEnabled && (opts.GlobalAnnEnabled || opts.RelayWithoutGlobalAnn) {
-		relaySvc = relay.NewSvc(cfg, tlsCfg)
+	var relaySvc *relay.Service
+	if opts.RelaysEnabled {
+		relaySvc = relay.NewService(cfg, tlsCfg)
 		mainSvc.Add(relaySvc)
 	}
 
