@@ -247,7 +247,7 @@ func Unmount(point string) error {
 	case "darwin":
 		cmd = exec.Command("/usr/sbin/diskutil", "umount", "force", point)
 	case "linux":
-		cmd = exec.Command("fusermount", "-u", point)
+		cmd = exec.Command("fusermount", "-z", "-u", point)
 	default:
 		return errors.New("unmount: unimplemented")
 	}
