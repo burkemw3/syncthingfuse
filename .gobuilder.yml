@@ -1,0 +1,7 @@
+build_matrix:
+  osx/amd64:
+  osx/386:
+  linux/amd64:
+  linux/386:
+readme_file: README.md
+
