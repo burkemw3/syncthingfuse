@@ -1,3 +1,6 @@
+This file is outdated, but reserved for future development fodder. Focus on github issues instead.
+---
+
 A special FUSE client for Syncthing
 
 - doesn't try to stay in full sync, just cache files locally when they are read
