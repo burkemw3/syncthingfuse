@@ -16,7 +16,6 @@ import (
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
-	_ "bazil.org/fuse/fs/fstestutil"
 	"github.com/burkemw3/syncthingfuse/lib/model"
 	"golang.org/x/net/context"
 )
