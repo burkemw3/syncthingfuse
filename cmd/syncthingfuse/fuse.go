@@ -17,6 +17,7 @@ import (
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	"github.com/burkemw3/syncthingfuse/lib/model"
+	"github.com/thejerf/suture"
 	"golang.org/x/net/context"
 )
 
@@ -26,7 +27,7 @@ var Usage = func() {
 	flag.PrintDefaults()
 }
 
-func MountFuse(mountpoint string, m *model.Model) {
+func MountFuse(mountpoint string, m *model.Model, mainSvc suture.Service) {
 	c, err := fuse.Mount(
 		mountpoint,
 		fuse.FSName("syncthingfuse"),
@@ -59,9 +60,8 @@ func MountFuse(mountpoint string, m *model.Model) {
 		l.Infoln("Signal", sig, "received, shutting down.")
 	}
 
-	time.AfterFunc(3*time.Second, func() {
-		os.Exit(1)
-	})
+	mainSvc.Stop()
+
 	l.Infoln("Unmounting...")
 	err = Unmount(mountpoint)
 	if err == nil {
@@ -69,8 +69,6 @@ func MountFuse(mountpoint string, m *model.Model) {
 	} else {
 		l.Infoln("Unmount failed:", err)
 	}
-
-	l.Infoln("syncthing FUSE process ending.")
 }
 
 var (
@@ -260,7 +258,7 @@ func Unmount(point string) error {
 		errc <- cmd.Run()
 	}()
 	select {
-	case <-time.After(1 * time.Second):
+	case <-time.After(10 * time.Second):
 		return errors.New("umount timeout")
 	case err := <-errc:
 		return err

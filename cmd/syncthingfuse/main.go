@@ -100,7 +100,13 @@ func main() {
 		l.Infoln("Mount point (", cfg.Raw().MountPoint, ") does not exist, creating it")
 		err = os.MkdirAll(cfg.Raw().MountPoint, 0700)
 		if err != nil {
-			l.Fatalln("Error creating mount point", cfg.Raw().MountPoint, err)
+			l.Warnln("Error creating mount point", cfg.Raw().MountPoint, err)
+			l.Warnln("Sometimes, SyncthingFUSE doesn't shut down and unmount cleanly,")
+			l.Warnln("If you don't know of any other file systems you have mounted at")
+			l.Warnln("the mount point, try running the command below to unmount, then")
+			l.Warnln("start SyncthingFUSE again.")
+			l.Warnln("    umount", cfg.Raw().MountPoint)
+			l.Fatalln("Cannot create missing mount point")
 			os.Exit(1)
 		}
 	}
@@ -133,9 +139,8 @@ func main() {
 
 	l.Infoln("Started ...")
 
-	MountFuse(cfg.Raw().MountPoint, m) // TODO handle fight between FUSE and Syncthing Service
+	MountFuse(cfg.Raw().MountPoint, m, mainSvc) // TODO handle fight between FUSE and Syncthing Service
 
-	mainSvc.Stop()
 	l.Okln("Exiting")
 
 	return
