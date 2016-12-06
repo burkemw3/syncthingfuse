@@ -234,10 +234,10 @@ func (s *apiSvc) postSystemConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Activate and save
-	resp := s.cfg.Replace(to)
+	err = s.cfg.Replace(to)
 	s.configInSync = false
-	if resp.ValidationError != nil {
-		http.Error(w, resp.ValidationError.Error(), 400)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
 		return
 	}
 	s.cfg.Save()

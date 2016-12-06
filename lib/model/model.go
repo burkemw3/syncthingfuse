@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net"
 	"os"
 	"sort"
 	"sync"
@@ -19,7 +20,7 @@ import (
 	"github.com/burkemw3/syncthingfuse/lib/filetreecache"
 	"github.com/cznic/mathutil"
 	human "github.com/dustin/go-humanize"
-	stmodel "github.com/syncthing/syncthing/lib/model"
+	"github.com/syncthing/syncthing/lib/connections"
 	"github.com/syncthing/syncthing/lib/protocol"
 	stsync "github.com/syncthing/syncthing/lib/sync"
 )
@@ -38,8 +39,8 @@ type Model struct {
 	pinnedList list.List
 	lmut       *sync.Cond // protects pull list. must not be acquired before fmut, nor after pmut
 
-	protoConn map[protocol.DeviceID]stmodel.Connection
-	pmut      stsync.RWMutex // protects protoConn and rawConn. must not be acquired before fmut
+	protoConn map[protocol.DeviceID]connections.Connection
+	pmut      stsync.RWMutex // protects protoConn. must not be acquired before fmut
 }
 
 func NewModel(cfg *config.Wrapper, db *bolt.DB) *Model {
@@ -57,7 +58,7 @@ func NewModel(cfg *config.Wrapper, db *bolt.DB) *Model {
 
 		lmut: sync.NewCond(&lmutex),
 
-		protoConn: make(map[protocol.DeviceID]stmodel.Connection),
+		protoConn: make(map[protocol.DeviceID]connections.Connection),
 		pmut:      stsync.NewRWMutex(),
 	}
 
@@ -93,6 +94,10 @@ func NewModel(cfg *config.Wrapper, db *bolt.DB) *Model {
 
 	return m
 }
+
+var (
+	errDeviceUnknown = errors.New("unknown device")
+)
 
 func (m *Model) unpinUnnecessaryBlocks(folder string) {
 	candidates := list.New()
@@ -157,7 +162,28 @@ func (m *Model) removeUnconfiguredFolders() {
 	})
 }
 
-func (m *Model) AddConnection(conn stmodel.Connection) {
+// GetHello is called when we are about to connect to some remote device.
+func (m *Model) GetHello(protocol.DeviceID) protocol.HelloIntf {
+	return &protocol.Hello{
+		DeviceName:    m.cfg.MyDeviceConfiguration().Name,
+		ClientName:    "SyncthingFUSE",
+		ClientVersion: "0.2.0",
+	}
+}
+
+// OnHello is called when an device connects to us.
+// This allows us to extract some information from the Hello message
+// and add it to a list of known devices ahead of any checks.
+func (m *Model) OnHello(remoteID protocol.DeviceID, addr net.Addr, hello protocol.HelloResult) error {
+	if _, ok := m.cfg.Devices()[remoteID]; ok {
+		// The device exists
+		return nil
+	}
+
+	return errDeviceUnknown
+}
+
+func (m *Model) AddConnection(conn connections.Connection, hello protocol.HelloResult) {
 	deviceID := conn.ID()
 
 	m.fmut.RLock()
@@ -166,19 +192,24 @@ func (m *Model) AddConnection(conn stmodel.Connection) {
 	defer m.pmut.Unlock()
 
 	if _, ok := m.protoConn[deviceID]; ok {
+		// TODO syncthing replaces connections, possibly for relays, so we should to that
 		panic("add existing device")
 	}
 	m.protoConn[deviceID] = conn
 
+	device, ok := m.cfg.Devices()[deviceID]
+	if ok && device.Name == "" {
+		device.Name = hello.DeviceName
+		m.cfg.SetDevice(device)
+		m.cfg.Save()
+	}
+
 	conn.Start()
 
+	// TODO how do we know the device is in our config and we should send cluster config?
+
 	/* build and send cluster config */
-	cm := protocol.ClusterConfigMessage{
-		DeviceName:    m.cfg.MyDeviceConfiguration().Name,
-		ClientName:    "SyncthingFUSE",
-		ClientVersion: "0.0.0",
-		Options:       []protocol.Option{},
-	}
+	cm := protocol.ClusterConfig{}
 
 	for folderName, devices := range m.folderDevices {
 		found := false
@@ -196,17 +227,13 @@ func (m *Model) AddConnection(conn stmodel.Connection) {
 			ID: folderName,
 		}
 		for _, device := range devices {
-			// DeviceID is a value type, but with an underlying array. Copy it
-			// so we don't grab aliases to the same array later on in device[:]
-			device := device
 			deviceCfg := m.cfg.Devices()[device]
 			cn := protocol.Device{
-				ID:          device[:],
+				ID:          device,
 				Name:        deviceCfg.Name,
 				Addresses:   deviceCfg.Addresses,
-				Compression: uint32(deviceCfg.Compression),
+				Compression: deviceCfg.Compression,
 				CertName:    deviceCfg.CertName,
-				Flags:       protocol.FlagShareTrusted,
 			}
 			cr.Devices = append(cr.Devices, cn)
 		}
@@ -481,7 +508,7 @@ func (m *Model) pullBlock(status *blockPullStatus, addToCache bool) {
 
 	if done != status.state {
 		devices, _ := m.treeCaches[status.folder].GetEntryDevices(status.file)
-		conns := make([]stmodel.Connection, 0)
+		conns := make([]connections.Connection, 0)
 		for _, deviceIndex := range rand.Perm(len(devices)) {
 			deviceWithFile := devices[deviceIndex]
 			if conn, ok := m.protoConn[deviceWithFile]; ok {
@@ -495,7 +522,6 @@ func (m *Model) pullBlock(status *blockPullStatus, addToCache bool) {
 			l.Debugln(status.comment, "block at offset", status.offset, "size", status.block.Size, "for", status.folder, status.file)
 		}
 
-		flags := uint32(0)
 		var requestedData []byte
 
 		for _, conn := range conns {
@@ -503,7 +529,7 @@ func (m *Model) pullBlock(status *blockPullStatus, addToCache bool) {
 				l.Debugln("Trying to fetch block at offset", status.offset, "for", status.folder, status.file, "from device", conn.ID().String()[:5])
 			}
 
-			requestedData, requestError = conn.Request(status.folder, status.file, status.offset, int(status.block.Size), status.block.Hash, flags, []protocol.Option{})
+			requestedData, requestError = conn.Request(status.folder, status.file, status.offset, int(status.block.Size), status.block.Hash, false)
 			if requestError == nil {
 				// check hash
 				actualHash := sha256.Sum256(requestedData)
@@ -572,7 +598,7 @@ func (m *Model) isFilePinned(folder string, filename string) bool {
 }
 
 // An index was received from the peer device
-func (m *Model) Index(deviceID protocol.DeviceID, folder string, files []protocol.FileInfo, flags uint32, options []protocol.Option) {
+func (m *Model) Index(deviceID protocol.DeviceID, folder string, files []protocol.FileInfo) {
 	if debug {
 		l.Debugln("model: receiving index from device", deviceID.String()[:5], "for folder", folder)
 	}
@@ -593,7 +619,7 @@ func (m *Model) Index(deviceID protocol.DeviceID, folder string, files []protoco
 }
 
 // An index update was received from the peer device
-func (m *Model) IndexUpdate(deviceID protocol.DeviceID, folder string, files []protocol.FileInfo, flags uint32, options []protocol.Option) {
+func (m *Model) IndexUpdate(deviceID protocol.DeviceID, folder string, files []protocol.FileInfo) {
 	if debug {
 		l.Debugln("model: receiving index update from device", deviceID.String()[:5], "for folder", folder)
 	}
@@ -703,26 +729,25 @@ func (m *Model) updateIndex(deviceID protocol.DeviceID, folder string, files []p
 }
 
 // A request was made by the peer device
-func (m *Model) Request(deviceID protocol.DeviceID, folder string, name string, offset int64, hash []byte, flags uint32, options []protocol.Option, buf []byte) error {
+func (m *Model) Request(deviceID protocol.DeviceID, folder string, name string, offset int64, hash []byte, fromTemporary bool, buf []byte) error {
 	return protocol.ErrNoSuchFile
 }
 
 // A cluster configuration message was received
-func (m *Model) ClusterConfig(deviceID protocol.DeviceID, config protocol.ClusterConfigMessage) {
+func (m *Model) ClusterConfig(deviceID protocol.DeviceID, config protocol.ClusterConfig) {
 	if debug {
 		l.Debugln("model: receiving cluster config from device", deviceID.String()[:5])
 	}
+}
 
-	device, ok := m.cfg.Devices()[deviceID]
-	if ok && device.Name == "" {
-		device.Name = config.DeviceName
-		m.cfg.SetDevice(device)
-		m.cfg.Save()
-	}
+func (m *Model) DownloadProgress(device protocol.DeviceID, folder string, updates []protocol.FileDownloadProgressUpdate) {
+	// no-op for us!
 }
 
 // The peer device closed the connection
-func (m *Model) Close(deviceID protocol.DeviceID, err error) {
+func (m *Model) Closed(conn protocol.Connection, err error) {
+	deviceID := conn.ID()
+
 	m.pmut.Lock()
 	delete(m.protoConn, deviceID)
 	m.pmut.Unlock()

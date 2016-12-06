@@ -13,12 +13,10 @@ import (
 	"github.com/burkemw3/syncthingfuse/lib/config"
 	"github.com/burkemw3/syncthingfuse/lib/model"
 	"github.com/calmh/logger"
-	stconfig "github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/connections"
 	"github.com/syncthing/syncthing/lib/discover"
 	"github.com/syncthing/syncthing/lib/osutil"
 	"github.com/syncthing/syncthing/lib/protocol"
-	"github.com/syncthing/syncthing/lib/relay"
 	"github.com/thejerf/suture"
 )
 
@@ -56,6 +54,13 @@ The default configuration directory is:
   %s
 
 `
+)
+
+// The discovery results are sorted by their source priority.
+const (
+	ipv6LocalDiscoveryPriority = iota
+	ipv4LocalDiscoveryPriority
+	globalDiscoveryPriority
 )
 
 func main() {
@@ -122,12 +127,48 @@ func main() {
 
 	m = model.NewModel(cfg, database)
 
-	cachedDiscovery, relaySvc := setupConnections(cfg.AsStCfg(myID), tlsCfg, cert, mainSvc)
-
 	lans, _ := osutil.GetLans()
 
-	connectionSvc := connections.NewConnectionService(cfg.AsStCfg(myID), myID, m, tlsCfg, cachedDiscovery, relaySvc, bepProtocolName, tlsDefaultCommonName, lans)
-	mainSvc.Add(connectionSvc)
+	// Start discovery
+	cachedDiscovery := discover.NewCachingMux()
+	mainSvc.Add(cachedDiscovery)
+
+	// Start connection management
+	connectionsService := connections.NewService(cfg.AsStCfg(myID), myID, m, tlsCfg, cachedDiscovery, bepProtocolName, tlsDefaultCommonName, lans)
+	mainSvc.Add(connectionsService)
+
+	if cfg.Raw().Options.GlobalAnnounceEnabled {
+		for _, srv := range cfg.Raw().Options.GlobalAnnounceServers {
+			l.Infoln("Using discovery server", srv)
+			gd, err := discover.NewGlobal(srv, cert, connectionsService)
+			if err != nil {
+				l.Warnln("Global discovery:", err)
+				continue
+			}
+
+			// Each global discovery server gets its results cached for five
+			// minutes, and is not asked again for a minute when it's returned
+			// unsuccessfully.
+			cachedDiscovery.Add(gd, 5*time.Minute, time.Minute, globalDiscoveryPriority)
+		}
+	}
+
+	if cfg.Raw().Options.LocalAnnounceEnabled {
+		// v4 broadcasts
+		bcd, err := discover.NewLocal(myID, fmt.Sprintf(":%d", cfg.Raw().Options.LocalAnnouncePort), connectionsService)
+		if err != nil {
+			l.Warnln("IPv4 local discovery:", err)
+		} else {
+			cachedDiscovery.Add(bcd, 0, 0, ipv4LocalDiscoveryPriority)
+		}
+		// v6 multicasts
+		mcd, err := discover.NewLocal(myID, cfg.Raw().Options.LocalAnnounceMCAddr, connectionsService)
+		if err != nil {
+			l.Warnln("IPv6 local discovery:", err)
+		} else {
+			cachedDiscovery.Add(mcd, 0, 0, ipv6LocalDiscoveryPriority)
+		}
+	}
 
 	if cfg.Raw().GUI.Enabled {
 		api, err := newAPISvc(myID, cfg, m)
@@ -150,61 +191,4 @@ func openDatabase(cfg *config.Wrapper) *bolt.DB {
 	databasePath := path.Join(path.Dir(cfg.ConfigPath()), "boltdb")
 	database, _ := bolt.Open(databasePath, 0600, nil) // TODO check error
 	return database
-}
-
-// The discovery results are sorted by their source priority.
-const (
-	ipv6LocalDiscoveryPriority = iota
-	ipv4LocalDiscoveryPriority
-	globalDiscoveryPriority
-)
-
-func setupConnections(cfg *stconfig.Wrapper, tlsCfg *tls.Config, cert tls.Certificate, mainSvc *suture.Supervisor) (*discover.CachingMux, *relay.Service) {
-	opts := cfg.Raw().Options
-
-	var relaySvc *relay.Service
-	if opts.RelaysEnabled {
-		relaySvc = relay.NewService(cfg, tlsCfg)
-		mainSvc.Add(relaySvc)
-	}
-
-	cachedDiscovery := discover.NewCachingMux()
-	mainSvc.Add(cachedDiscovery)
-
-	listenAddressList := newAddressLister(cfg)
-
-	if opts.GlobalAnnEnabled {
-		for _, srv := range cfg.GlobalDiscoveryServers() {
-			l.Infoln("Using discovery server", srv)
-			gd, err := discover.NewGlobal(srv, cert, listenAddressList, relaySvc)
-			if err != nil {
-				l.Warnln("Global discovery:", err)
-				continue
-			}
-
-			// Each global discovery server gets its results cached for five
-			// minutes, and is not asked again for a minute when it's returned
-			// unsuccessfully.
-			cachedDiscovery.Add(gd, 5*time.Minute, time.Minute, globalDiscoveryPriority)
-		}
-	}
-
-	if opts.LocalAnnEnabled {
-		// v4 broadcasts
-		bcd, err := discover.NewLocal(myID, fmt.Sprintf(":%d", opts.LocalAnnPort), listenAddressList, relaySvc)
-		if err != nil {
-			l.Warnln("IPv4 local discovery:", err)
-		} else {
-			cachedDiscovery.Add(bcd, 0, 0, ipv4LocalDiscoveryPriority)
-		}
-		// v6 multicasts
-		mcd, err := discover.NewLocal(myID, opts.LocalAnnMCAddr, listenAddressList, relaySvc)
-		if err != nil {
-			l.Warnln("IPv6 local discovery:", err)
-		} else {
-			cachedDiscovery.Add(mcd, 0, 0, ipv6LocalDiscoveryPriority)
-		}
-	}
-
-	return cachedDiscovery, relaySvc
 }

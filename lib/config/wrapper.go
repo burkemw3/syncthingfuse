@@ -120,7 +120,7 @@ func (w *Wrapper) SetFolder(fldCfg FolderConfiguration) {
 	}
 }
 
-func (w *Wrapper) Replace(to Configuration) stconfig.CommitResponse {
+func (w *Wrapper) Replace(to Configuration) error {
 	w.mut.Lock()
 	defer w.mut.Unlock()
 
@@ -128,22 +128,19 @@ func (w *Wrapper) Replace(to Configuration) stconfig.CommitResponse {
 	for _, fldrCfg := range to.Folders {
 		if _, err := fldrCfg.GetCacheSizeBytes(); err != nil {
 			l.Debugln("rejected config, cannot parse cache size:", err)
-			return stconfig.CommitResponse{
-				ValidationError: err,
-			}
+			return err
 		}
 	}
 
 	// set
 	w.cfg = to
-	return stconfig.CommitResponse{
-		RequiresRestart: true,
-	}
+
+	return nil
 }
 
 // Save writes the configuration to disk
 func (w *Wrapper) Save() error {
-	fd, err := osutil.CreateAtomic(w.path, 0600)
+	fd, err := osutil.CreateAtomic(w.path)
 	if err != nil {
 		return err
 	}

@@ -46,7 +46,7 @@ func (e *addressLister) addresses(includePrivateIPV4 bool) []string {
 	// on verbatim (to be interpreted by a global discovery server or local
 	// discovery peer). Public addresses are passed on verbatim. Private
 	// addresses are filtered.
-	for _, addrStr := range e.cfg.Options().ListenAddress {
+	for _, addrStr := range e.cfg.Options().ListenAddresses {
 		addrURL, err := url.Parse(addrStr)
 		if err != nil {
 			l.Infoln("Listen address", addrStr, "is invalid:", err)

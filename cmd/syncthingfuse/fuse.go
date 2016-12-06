@@ -147,7 +147,7 @@ func (d Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	// TODO assert directory?
 
 	a.Mode = os.ModeDir | 0555
-	a.Mtime = time.Unix(entry.Modified, 0)
+	a.Mtime = time.Unix(entry.ModifiedS, 0)
 	return nil
 }
 
@@ -219,8 +219,8 @@ func (f File) Attr(ctx context.Context, a *fuse.Attr) error {
 	}
 
 	a.Mode = 0444
-	a.Mtime = time.Unix(entry.Modified, 0)
-	a.Size = uint64(entry.Size())
+	a.Mtime = time.Unix(entry.ModifiedS, 0)
+	a.Size = uint64(entry.Size)
 	return nil
 }
 
